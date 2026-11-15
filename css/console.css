@@ -470,3 +470,33 @@ tr.off td{background:var(--warn-soft)}
 .listv .mfield{display:none;color:var(--mute);font-size:13px}
 @media(max-width:760px){.listv th:nth-child(n+3),.listv td:nth-child(n+3){display:none}.listv .mfield{display:inline}
   .progs{flex-wrap:nowrap;overflow-x:auto}.prog{flex:0 0 auto}.card.wide{width:100%}}
+
+/* ---------- fields: permits, practices, open time ---------- */
+.blk.practice{background:var(--d-prac);cursor:pointer;
+  background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.14) 0 5px,transparent 5px 10px)}
+.blk.practice.proj{opacity:.8;border-style:dashed}
+.blk.other{opacity:.45}
+.gut b.use.n{background:#B9C2BB;color:#3D4A44}
+.gname.fl{background:none;border:0;padding:0;font:inherit;font-weight:600;color:inherit;text-align:left;
+  cursor:pointer;border-bottom:1px dotted var(--line-2)}
+.gname.fl:hover{color:var(--d-aaa);border-bottom-color:var(--d-aaa)}
+.open b{display:block;font-weight:600;font-size:12.5px}
+.lane.hl .gut{background:var(--warn-soft)}
+.lane.hl .track{box-shadow:inset 0 0 0 2px var(--d-tb)}
+.odays{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:14px}
+.odays label{display:flex;align-items:center;gap:4px;color:var(--ink);margin:0}
+.odays input{width:auto;margin:0}
+.orow2{display:flex;align-items:center;gap:10px;padding:4px 0;border-bottom:1px solid var(--chalk);font-size:14px}
+.orow2 .flink{flex:1 1 auto;text-align:left;min-width:0}
+.orow2 span{flex:0 0 auto;white-space:nowrap}
+.orow2 em{font-style:normal;color:var(--mute);font-size:13px}
+.orow2 .btn{padding:2px 9px;font-size:13px}
+#oOut{margin-top:6px;max-height:52vh;overflow:auto}
+tr.orow td{color:#2E6B45}
+tr.orow{cursor:pointer}
+.banner>div+div{margin-top:4px}
+.banner button[data-dl],.banner button[data-drop],#banProb{font:inherit;font-weight:600;background:none;border:0;
+  padding:0;text-decoration:underline;cursor:pointer;color:inherit}
+.addhere{padding:1px 8px;font-size:12.5px;margin-left:6px}
+@media(max-width:760px){.orow2{flex-wrap:wrap}}
+.showbox{display:flex;align-items:center;gap:6px}

@@ -4,9 +4,9 @@
    changes until they are entered in TeamLinkt and a new export is imported. */
 (function(){
 'use strict';
-const CFG=window.MCLL_CONFIG, TL=window.TL, RU=window.RULES;
+const CFG=window.MCLL_CONFIG, TL=window.TL, RU=window.RULES, FD=window.FD;
 const $=id=>document.getElementById(id);
-const KEY='mcll_console_v1';
+const KEY='mcll_console_v1', KEYF='mcll_fields_v1';
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=m=>{const h=Math.floor(m/60),n=((m%60)+60)%60;return `${(h%12)||12}:${String(n).padStart(2,'0')}${h<12?'am':'pm'}`;};
 const hhmm=m=>`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
@@ -14,10 +14,14 @@ const LANE_SNAP=15;
 
 let BASE=[], G=[];                 // TeamLinkt truth, and the working copy
 let REPO=null;                     // games in the published file, when it could be read
-let cur=null, prog='ALL', sel=null, admin=false, panel='issues', view='grid', fieldMode='used';
+let cur=null, prog='ALL', sel=null, admin=false, panel='issues', view='grid', fieldMode='permitted';
 let hide=new Set(), teamFocus='', bad=new Set(), warned=new Set(), ISSUES=[];
 let ignored=new Set(), litLocal={}, meta={src:'',when:'',sig:'',last:null};
 let PX=1.55;
+/* field supply: permits and practices. RAW holds the text in use for each
+   (the published file, or one imported in this browser); FX is the index. */
+let RAW={permits:null,practices:null}, PUBF={permits:null,practices:null};
+let PERMITS=[], PRACS=[], FX=FD.index([],[]), FPROB={permits:[],practices:[]}, showPrac=true;
 
 /* ------------------------------------------------------------ derived facts */
 const _gm={};
@@ -51,12 +55,47 @@ function shortTeam(t){
   return _st[t]=s||t;
 }
 const vs=g=>g.away?`${shortTeam(g.home)} v ${shortTeam(g.away)}`:(shortTeam(g.home||'')||g.notes||g.type);
+/* "Beverly Farms Local Park - Field 1" -> "Beverly Farms LP #1" (display only) */
+function shortField(f){
+  return String(f).replace(/\bLocal Park\b/g,'LP').replace(/\b(Recreational|Regional|Rec) Park\b/g,'RP')
+    .replace(/\bMiddle School\b/g,'MS').replace(/\bElementary School\b/g,'ES').replace(/\bHigh School\b/g,'HS')
+    .replace(/\s*-\s*Field\s+(\w+)$/,' #$1').replace(/\s+Field\s+(\w+)$/,' #$1');
+}
 function park(loc){
   const m=String(loc).match(/^(.*?)(?:\s+-\s+|\s+)(Field\s+\w+)$/i);
   return m?{park:m[1],sub:m[2]}:{park:loc,sub:''};
 }
 const hasTeam=(g,t)=>g.home===t||g.away===t;
 const focusHit=g=>!teamFocus||hasTeam(g,teamFocus);
+const inProgX=x=>prog==='ALL'||!x.prog||x.prog===prog;            // a permit or practice
+const pracHit=p=>!teamFocus||p.team===teamFocus;
+const pracShown=()=>showPrac?PRACS:[];
+const capFor=(date,f)=>isLit(f)?null:sunset(date)+CFG.sunsetGrace;
+const openOn=(date,f,o)=>FX.free(date,f,Object.assign({games:G.filter(g=>g.date===date&&!RU.noTime(g)),cap:capFor(date,f)},o||{}))
+  .filter(w=>w.end-w.start>=CFG.minOpen);
+const seed=(f,w,date)=>({loc:f,date,start:w.start,end:w.start+Math.min(120,w.end-w.start)});
+const hrs=m=>{ const h=Math.round(m/30)/2; return h+' h'; };
+
+/* ------------------------------------------------------------ field supply */
+function locations(){ return [...new Set(G.map(g=>g.loc).concat(BASE.map(g=>g.loc)).filter(l=>!noField(l)))]; }
+function teamOf(coach,div){
+  const sur=String(coach||'').trim().split(/\s+/).pop().toLowerCase(); if(!sur) return '';
+  const teams=[...new Set(G.flatMap(g=>[g.home,g.away]).filter(Boolean))].filter(t=>t.toLowerCase().indexOf(sur)>=0);
+  const d=String(div||'').toLowerCase(), narrow=d?teams.filter(t=>t.toLowerCase().indexOf(d)>=0):[];
+  return (narrow.length===1?narrow:teams.length===1?teams:[])[0]||'';
+}
+function rebuildFields(){
+  const R=FD.resolver(locations(),CFG.fieldAliases);
+  const a=RAW.permits?FD.parsePermits(RAW.permits.text,R):{permits:[],problems:[]};
+  const b=RAW.practices?FD.parsePractices(RAW.practices.text,R,teamOf):{practices:[],problems:[]};
+  const progOfTeam={}; G.forEach(g=>[g.home,g.away].forEach(t=>{ if(t&&!progOfTeam[t]) progOfTeam[t]=progOf(g); }));
+  b.practices.forEach(p=>{ if(!p.prog) p.prog=progOfTeam[p.team]||''; });
+  PERMITS=a.permits; PRACS=b.practices; FPROB={permits:a.problems,practices:b.problems};
+  FX=FD.index(PERMITS,PRACS);
+}
+function saveF(){ try{ const o={}; ['permits','practices'].forEach(k=>{ if(RAW[k]&&RAW[k].local) o[k]=RAW[k]; });
+  localStorage.setItem(KEYF,JSON.stringify(o)); }catch(e){} }
+function loadF(){ try{ return JSON.parse(localStorage.getItem(KEYF)||'{}')||{}; }catch(e){ return {}; } }
 
 /* ------------------------------------------------------------------ storage */
 function save(){
@@ -74,16 +113,24 @@ function readHash(){
   if(/^\d{4}-\d\d-\d\d$/.test(p.get('d')||'')) cur=p.get('d');
   if(p.get('t')) teamFocus=p.get('t');
   if(p.get('v')==='list'||p.get('v')==='grid') view=p.get('v');
+  if(['used','permitted','all'].includes(p.get('f'))) fieldMode=p.get('f');
 }
 function writeHash(){
   const p=new URLSearchParams(); p.set('p',prog); if(cur) p.set('d',cur);
   if(teamFocus) p.set('t',teamFocus); if(view==='list') p.set('v','list');
+  if(fieldMode!=='permitted') p.set('f',fieldMode);
   history.replaceState(null,'','#'+p.toString());
 }
 
 /* -------------------------------------------------------------------- dates */
 function scoped(){ return G.filter(g=>inProg(g)&&focusHit(g)); }
-function allDates(){ return [...new Set(scoped().map(g=>g.date))].sort(); }
+function scopedPrac(){ return pracShown().filter(p=>inProgX(p)&&pracHit(p)); }
+function allDates(){
+  const d=new Set(scoped().map(g=>g.date));
+  scopedPrac().forEach(p=>d.add(p.date));
+  if(fieldMode==='permitted'&&!teamFocus) PERMITS.forEach(p=>{ if(inProgX(p)) d.add(p.date); });
+  return [...d].sort();
+}
 function defaultDate(){
   const all=allDates(); if(!all.length) return null;
   const t=todayISO(); return all.includes(t)?t:(all.find(d=>d>=t)||all[all.length-1]);
@@ -112,9 +159,10 @@ function renderStrip(){
   const today=todayISO();
   allDates().forEach(d=>{
     const day=scoped().filter(g=>g.date===d), wd=new Date(d+'T12:00:00').getDay();
+    const np=scopedPrac().filter(p=>p.date===d).length;
     const flag=day.some(g=>bad.has(g.id));
     const b=document.createElement('button'); b.className='chip'; b.setAttribute('aria-current',d===cur);
-    b.innerHTML=`<b>${dlabel(d)}${d===today?' · today':''}</b>${day.length} game${day.length===1?'':'s'}`
+    b.innerHTML=`<b>${dlabel(d)}${d===today?' · today':''}</b>${day.length?day.length+' game'+(day.length===1?'':'s'):np?'':'permits only'}${np?(day.length?' · ':'')+np+' prac':''}`
       +(flag?'<span class="dot flag" title="A rule is broken on this date"></span>':(wd===6||wd===0?'<span class="dot"></span>':''));
     b.onclick=()=>{cur=d;sel=null;render();b.scrollIntoView({block:'nearest',inline:'center'});};
     s.appendChild(b);
@@ -143,14 +191,18 @@ function renderFilters(){
   tl.innerHTML=[...new Set(G.filter(inProg).flatMap(g=>[g.home,g.away]).filter(Boolean))].sort()
     .map(t=>`<option value="${esc(t)}">`).join('');
   $('teamFind').value=teamFocus; $('teamClear').hidden=!teamFocus;
-  $('viewsel').value=view; $('fieldsel').value=fieldMode;
+  $('viewsel').value=view; $('fieldsel').value=fieldMode; $('showsel').value=showPrac?'all':'games';
+  $('showsel').parentElement.hidden=!PRACS.length;
+  [...$('fieldsel').options].forEach(o=>{ if(o.value==='permitted') o.hidden=!PERMITS.length; });
 }
 
 function lanesFor(date){
-  const day=G.filter(g=>g.date===date);
+  const day=G.filter(g=>g.date===date), dp=pracShown().filter(p=>p.date===date&&inProgX(p)&&pracHit(p));
   let names;
-  if(fieldMode==='all') names=new Set(G.filter(g=>inProg(g)).map(g=>g.loc));
-  else names=new Set(day.filter(g=>inProg(g)&&focusHit(g)).map(g=>g.loc));
+  if(fieldMode==='all'){ names=new Set(G.filter(g=>inProg(g)).map(g=>g.loc));
+    PERMITS.forEach(p=>{ if(inProgX(p)) names.add(p.field); }); pracShown().forEach(p=>{ if(inProgX(p)) names.add(p.field); }); }
+  else { names=new Set(day.filter(g=>inProg(g)&&focusHit(g)).map(g=>g.loc)); dp.forEach(p=>names.add(p.field));
+    if(fieldMode==='permitted'&&!teamFocus) PERMITS.forEach(p=>{ if(p.date===date&&inProgX(p)) names.add(p.field); }); }
   return [...names].sort((a,b)=>(noField(a)-noField(b))||a.localeCompare(b,undefined,{numeric:true}));
 }
 
@@ -163,16 +215,22 @@ function renderGrid(){
     $('dayName').textContent=''; $('dayMeta').textContent=''; return; }
   const ss=sunset(cur), lanes=lanesFor(cur);
   const dayAll=G.filter(x=>x.date===cur&&lanes.includes(x.loc));
-  const mine=dayAll.filter(x=>inProg(x));
+  const dayPrac=pracShown().filter(p=>p.date===cur&&lanes.includes(p.field));
+  const mine=dayAll.filter(x=>inProg(x)), myPrac=dayPrac.filter(inProgX);
   $('dayName').textContent=dlabel(cur,{weekday:'long',month:'long',day:'numeric'});
-  const other=dayAll.length-mine.length;
-  $('dayMeta').textContent=`sunset ${fmt(ss)} · ${mine.length} game${mine.length===1?'':'s'} on ${lanes.length} field${lanes.length===1?'':'s'}`
+  const other=dayAll.length-mine.length+dayPrac.length-myPrac.length;
+  const openMin=lanes.filter(f=>FX.known.has(f)).reduce((m,f)=>m+openOn(cur,f).reduce((a,w)=>a+w.end-w.start,0),0);
+  $('dayMeta').textContent=`sunset ${fmt(ss)} · ${mine.length} game${mine.length===1?'':'s'}`
+    +(myPrac.length?` · ${myPrac.length} practice${myPrac.length===1?'':'s'}`:'')
+    +` on ${lanes.length} field${lanes.length===1?'':'s'}`
+    +(openMin?` · ${hrs(openMin)} of permitted time open`:'')
     +(other?` · ${other} from other programs on the same fields (faded)`:'');
   $('dayMeta').title=$('dayMeta').textContent;
   g.classList.toggle('aslist',view==='list');
-  if(view==='list') return renderList(g,dayAll,ss);
+  if(view==='list') return renderList(g,dayAll,ss,dayPrac);
 
-  const timed=dayAll.filter(x=>!RU.noTime(x));
+  const timed=dayAll.filter(x=>!RU.noTime(x)).concat(dayPrac);
+  lanes.forEach(f=>FX.windows(cur,f).forEach(w=>timed.push(w)));
   const lo=timed.map(x=>x.start), hi=timed.map(x=>x.end).concat([ss+CFG.sunsetGrace]);
   let t0=Math.floor((lo.length?Math.min(...lo):9*60)/60)*60-60, t1=Math.ceil(Math.max(...hi)/60)*60;
   if(fieldMode==='all') t0=Math.min(t0,9*60);
@@ -195,24 +253,46 @@ function renderGrid(){
     const pk=park(f), grouped=parkCount[pk.park]>1&&pk.sub;
     if(grouped&&pk.park!==lastPark){
       const ar=document.createElement('div'); ar.className='arow';
-      ar.innerHTML=`<div class="gut">${esc(pk.park)}</div>`;
+      ar.innerHTML=`<div class="gut">${esc(shortField(pk.park))}</div>`;
       const t2=document.createElement('div'); t2.className='track'; t2.style.width=W+'px'; ar.appendChild(t2); g.appendChild(ar);
     }
     lastPark=grouped?pk.park:null;
     const lit=isLit(f), here=dayAll.filter(x=>x.loc===f).sort((a,b)=>a.start-b.start);
+    const pr=dayPrac.filter(p=>p.field===f);
     const lane=document.createElement('div'); lane.className='lane'; lane.dataset.field=f;
-    const free=noField(f)?'':freeText(here.filter(x=>!RU.noTime(x)),t0,lit?t1:Math.min(t1,ss+CFG.sunsetGrace));
-    lane.innerHTML=`<div class="gut" title="${esc(f)}"><div class="g1"><span class="gname">${esc(grouped?pk.sub:f)}</span>${lit?'<b class="lit">lit</b>':''}`
+    const known=FX.known.has(f), wins=known?FX.windows(cur,f):[], opens=known?openOn(cur,f):[];
+    const free=noField(f)||known||PERMITS.length?'':freeText(here.filter(x=>!RU.noTime(x)).concat(pr),t0,lit?t1:Math.min(t1,ss+CFG.sunsetGrace));
+    const openTot=opens.reduce((a,w)=>a+w.end-w.start,0);
+    const use=!known?'':!wins.length?'<b class="use n" title="No permit on file for this date">no permit</b>'
+      :wins.some(w=>w.use==='Game')?'<b class="use g" title="Game permit">game</b>':'<b class="use p" title="Practice permit">prac</b>';
+    const booked=[here.length?here.length+' game'+(here.length===1?'':'s'):'',pr.length?pr.length+' prac':''].filter(Boolean).join(', ')||'nothing booked';
+    lane.innerHTML=`<div class="gut" title="${esc(f)}"><div class="g1"><button class="gname fl" data-f="${esc(f)}" title="${esc(f)} - permits, practices and open time">${esc(grouped?pk.sub:shortField(f))}</button>${use}${lit?'<b class="lit">lit</b>':''}`
       +(admin&&!noField(f)?`<button class="flipb" data-f="${esc(f)}" title="Lit fields are not held to sunset. Saved in this browser - add the field to litFields in js/config.js to make it permanent.">${lit?'unmark lit':'mark lit'}</button>`:'')
-      +`</div><div class="g2"><em>${here.length?here.length+' booked':'nothing booked'}${free?' · '+free:''}</em></div></div>`;
+      +`</div><div class="g2"><em>${booked}${free?' · '+free:''}${openTot?' · '+hrs(openTot)+' open':''}</em></div></div>`;
     const tr=document.createElement('div'); tr.className='track'; tr.style.width=W+'px';
+    /* permit hours: hatch what MCLL does not hold; open ground drawn as boxes */
+    if(known){
+      if(!wins.length){ const sh=document.createElement('div'); sh.className='shut nop'; sh.style.left='0'; sh.style.right='0';
+        const n=FX.nearest(cur,f); sh.title='No permit on file for this date'+(n.prev?` - last one ${dlabel(n.prev)}`:'')+(n.next?`, next ${dlabel(n.next)}`:''); tr.appendChild(sh); }
+      else { let c=t0; wins.concat([{start:t1,end:t1}]).forEach(w=>{ if(w.start>c){ const sh=document.createElement('div'); sh.className='shut';
+          sh.style.left=x(c)+'px'; sh.style.width=(x(Math.min(w.start,t1))-x(c))+'px'; sh.title='Outside the permit'; tr.appendChild(sh); }
+          c=Math.max(c,w.end); }); }
+      opens.forEach(w=>{ const o=document.createElement('div'); o.className='open'+(w.use==='Practice'?' soft':'');
+        o.style.left=x(w.start)+'px'; o.style.width=Math.max((w.end-w.start)*PX-2,20)+'px';
+        o.innerHTML=`<b>open</b><small>${fmt(w.start)}–${fmt(w.end)}</small>`;
+        o.title=`${f}\n${fmt(w.start)}–${fmt(w.end)} open (${w.end-w.start} min) on a ${w.use.toLowerCase()} permit`
+          +(admin?'\nClick to add a game here':'\nClick for this field\'s permits');
+        o.onclick=e=>{ e.stopPropagation(); admin?openEdit(null,seed(f,w,cur)):openField(f); };
+        tr.appendChild(o); });
+    }
     if(!lit){ const dusk=document.createElement('div'); dusk.className='dusk'; dusk.style.left=x(ss)+'px'; dusk.style.right='0'; tr.appendChild(dusk); }
     const sl=document.createElement('div'); sl.className='sunline'; sl.style.left=x(ss)+'px'; sl.title=`Sunset ${fmt(ss)}`; tr.appendChild(sl);
     if(admin&&!noField(f)){ tr.addEventListener('dblclick',e=>{ if(e.target!==tr) return;
       const m=Math.round((t0+(e.clientX-tr.getBoundingClientRect().left)/PX)/LANE_SNAP)*LANE_SNAP; openEdit(null,{loc:f,start:m}); }); }
-    const rows=[];
+    const rows=[], items=here.concat(pr).sort((a,b)=>a.start-b.start);
     here.forEach(gm=>{ const tbd=RU.noTime(gm); gm._s=tbd?t0:gm.start; gm._e=tbd?t0+100/PX:gm.end; });
-    here.forEach(gm=>{ let r=rows.findIndex(rw=>rw.every(o=>gm._s>=o._e||gm._e<=o._s));
+    pr.forEach(p=>{ p._s=p.start; p._e=p.end; });
+    items.forEach(gm=>{ let r=rows.findIndex(rw=>rw.every(o=>gm._s>=o._e||gm._e<=o._s));
       if(r<0){rows.push([gm]);r=rows.length-1;}else rows[r].push(gm); gm._row=r; });
     const nrow=Math.max(rows.length,1);
     if(nrow>1) tr.style.height=(nrow*30+8)+'px';
@@ -232,11 +312,22 @@ function renderGrid(){
       el.addEventListener('click',()=>{ if(!admin){ sel=gm.id; openInfo(gm); markSel(); } });
       tr.appendChild(el);
     });
+    pr.forEach(p=>{
+      const el=document.createElement('div');
+      el.className='blk practice'+(/proj/i.test(p.status)?' proj':'')+(!inProgX(p)?' other':'')+(!pracHit(p)?' dim':'')+(sel===p.id?' sel':'');
+      el.style.left=x(p._s)+'px'; el.style.width=Math.max((p._e-p._s)*PX-2,26)+'px'; el.dataset.id=p.id;
+      if(nrow>1){ el.style.top=(4+p._row*30)+'px'; el.style.bottom='auto'; el.style.height='28px'; el.classList.add('thin'); }
+      el.innerHTML=`<div style="position:relative"><b>${esc(shortTeam(p.team))} practice</b><small>${esc(p.div||'')} · ${fmt(p.start)}–${fmt(p.end)}</small></div>`;
+      el.title=`Practice: ${p.team}\n${f} ${fmt(p.start)}–${fmt(p.end)}${p.status?'\n'+p.status:''}`;
+      el.onclick=()=>{ sel=p.id; openPractice(p); markSel(); };
+      tr.appendChild(el);
+    });
     lane.appendChild(tr);
     if(nrow>1) lane.querySelector('.gut').style.minHeight=(nrow*30+8)+'px';
     g.appendChild(lane);
   });
   g.querySelectorAll('.flipb').forEach(b=>b.onclick=()=>{ const f=b.dataset.f; litLocal[f]=!isLit(f); save(); render(); });
+  g.querySelectorAll('.gname.fl').forEach(b=>b.onclick=()=>openField(b.dataset.f));
 }
 function freeText(here,t0,t1){
   let c=t0, best=0; here.forEach(g=>{ best=Math.max(best,g.start-c); c=Math.max(c,g.end); });
@@ -246,23 +337,36 @@ function freeText(here,t0,t1){
 function markSel(){ $('grid').querySelectorAll('.blk.sel,tr.sel').forEach(e=>e.classList.remove('sel'));
   const el=$('grid').querySelector(`[data-id="${sel}"]`); if(el) el.classList.add('sel'); }
 
-function renderList(g,dayAll,ss){
-  const rows=dayAll.slice().sort((a,b)=>a.start-b.start||a.loc.localeCompare(b.loc));
+function renderList(g,dayAll,ss,dayPrac){
+  const rows=dayAll.concat((dayPrac||[]).map(p=>({...p,_p:1,loc:p.field}))).sort((a,b)=>a.start-b.start||a.loc.localeCompare(b.loc));
   let h='<table class="listv"><tr><th>Time</th><th>Game</th><th>Field</th><th>Division</th></tr>';
-  rows.forEach(gm=>{ const m=gmeta(gm.group), faded=hide.has(gm.group)||!focusHit(gm)||!inProg(gm);
+  rows.forEach(gm=>{ if(gm._p){ const faded=!inProgX(gm)||!pracHit(gm);
+      h+=`<tr class="g prow${faded?' dimrow':''}" data-pid="${gm.id}"><td style="white-space:nowrap">${fmt(gm.start)}–${fmt(gm.end)}</td>
+        <td><b>${esc(gm.team)}</b> practice${/proj/i.test(gm.status)?' <span class="note">projected</span>':''}<span class="mfield"><br>${esc(gm.loc)}</span></td>
+        <td>${esc(gm.loc)}</td><td style="white-space:nowrap"><i class="sw" style="background:var(--d-prac)"></i>practice${gm.div?' · '+esc(gm.div):''}</td></tr>`; return; }
+    const m=gmeta(gm.group), faded=hide.has(gm.group)||!focusHit(gm)||!inProg(gm);
     h+=`<tr class="g${bad.has(gm.id)?' bad':''}${faded?' dimrow':''}" data-id="${gm.id}">
       <td style="white-space:nowrap">${RU.noTime(gm)?'time not set':fmt(gm.start)+'–'+fmt(gm.end)}${!isLit(gm.loc)&&gm.end>ss+CFG.sunsetGrace?' <span class="note">after sunset</span>':''}</td>
       <td><b>${esc(gm.home)}</b>${gm.away?' v <b>'+esc(gm.away)+'</b>':''}${isPending(gm)?' <span class="note">changed here</span>':''}<span class="mfield"><br>${esc(gm.loc)} · ${esc(m.label)}</span>${gm.notes?`<br><span class="note">${esc(gm.notes)}</span>`:''}</td>
       <td>${esc(gm.loc)}</td><td style="white-space:nowrap"><i class="sw" style="background:${m.color}"></i>${esc(m.label)}</td></tr>`; });
+  const open=[];
+  lanesFor(cur).filter(f=>FX.known.has(f)).forEach(f=>openOn(cur,f).forEach(w=>open.push({f,w})));
+  if(open.length){ h+=`<tr><th colspan="4" style="padding-top:10px">Open permitted time</th></tr>`;
+    open.sort((a,b)=>a.w.start-b.w.start||a.f.localeCompare(b.f)).forEach(o=>{
+      h+=`<tr class="orow" data-f="${esc(o.f)}" data-s="${o.w.start}" data-e="${o.w.end}"><td style="white-space:nowrap">${fmt(o.w.start)}–${fmt(o.w.end)}</td>
+        <td><b>open</b> · ${o.w.end-o.w.start} min${admin?' <span class="note">click to add a game</span>':''}<span class="mfield"><br>${esc(o.f)}</span></td>
+        <td>${esc(o.f)}</td><td style="white-space:nowrap">${o.w.use.toLowerCase()} permit</td></tr>`; }); }
   g.innerHTML=h+'</table>';
-  g.querySelectorAll('tr.g').forEach(tr=>tr.onclick=()=>{ const gm=G.find(x=>x.id===tr.dataset.id); sel=gm.id; admin?openEdit(gm):openInfo(gm); });
+  g.querySelectorAll('tr.g:not(.prow)').forEach(tr=>tr.onclick=()=>{ const gm=G.find(x=>x.id===tr.dataset.id); sel=gm.id; admin?openEdit(gm):openInfo(gm); });
+  g.querySelectorAll('tr.prow').forEach(tr=>tr.onclick=()=>openPractice(PRACS.find(p=>p.id===tr.dataset.pid)));
+  g.querySelectorAll('tr.orow').forEach(tr=>tr.onclick=()=>admin?openEdit(null,seed(tr.dataset.f,{start:+tr.dataset.s,end:+tr.dataset.e},cur)):openField(tr.dataset.f));
 }
 
 /* ------------------------------------------------------------------- issues */
 const issueKey=i=>i.id+'|'+String(i.t).replace(/\b\d{1,2}:\d{2}(am|pm)\b/gi,'#').replace(/\b\d+ min\b/g,'# min').replace(/\s+/g,' ').trim();
 function runRules(){
   const byId=new Map(G.map(g=>[g.id,g]));
-  ISSUES=RU.validate(G,{cfg:CFG,lit:isLit,programOf:progOf});
+  ISSUES=RU.validate(G,{cfg:CFG,lit:isLit,programOf:progOf,fields:FX});
   ISSUES.forEach(i=>{ i.progs=new Set((i.ids||[]).map(id=>byId.get(id)).filter(Boolean).map(progOf)); });
   const live=ISSUES.filter(i=>!ignored.has(issueKey(i)));
   bad=new Set(live.filter(i=>i.lv==='bad').flatMap(i=>i.ids||[]));
@@ -376,10 +480,23 @@ function renderHead(){
   const ban=$('banner'), msgs=[];
   if(REPO&&G.length&&TL.diff(BASE,REPO).same.length!==Math.max(BASE.length,REPO.length))
     msgs.push(`This browser holds a newer TeamLinkt import than the website. Other people still see the old one. <button id="banPub">Download schedule.csv</button> then upload it to the <b>data</b> folder on GitHub.`);
-  ban.hidden=!msgs.length; ban.innerHTML=msgs.join('');
+  ['permits','practices'].forEach(k=>{ const r=RAW[k]; if(!r||!r.local) return;
+    msgs.push(`This browser is using ${KIND[k].label} imported from <b>${esc(r.name)}</b> (${esc(r.when||'')}), which are not on the website. <button data-dl="${k}">Download ${KIND[k].file}</button> then upload it to the <b>data</b> folder on GitHub, or <button data-drop="${k}">go back to the published ${KIND[k].label}</button>.`); });
+  if(FPROB.permits.length||FPROB.practices.length) msgs.push(`Some rows of the ${FPROB.permits.length?'permit':'practice'} file could not be read. <button id="banProb">See which</button>`);
+  ban.hidden=!msgs.length; ban.innerHTML=msgs.map(m=>`<div>${m}</div>`).join('');
   if($('banPub')) $('banPub').onclick=()=>download('schedule.csv',TL.serialize(BASE));
+  ban.querySelectorAll('[data-dl]').forEach(b=>b.onclick=()=>download(KIND[b.dataset.dl].file,RAW[b.dataset.dl].text));
+  ban.querySelectorAll('[data-drop]').forEach(b=>b.onclick=()=>dropLocal(b.dataset.drop));
+  if($('banProb')) $('banProb').onclick=()=>{ showModal('Rows that could not be read','data/permits.csv and data/practices.csv',
+    `<div class="pre">${FPROB.permits.concat(FPROB.practices).map(esc).join('<br>')}</div>`,'<button class="btn ghost" id="mClose">Close</button>'); $('mClose').onclick=closeModal; };
+}
+let _fkey='';
+function ensureFields(){
+  const k=[RAW.permits?RAW.permits.sig||RAW.permits.text.length:0,RAW.practices?RAW.practices.sig||RAW.practices.text.length:0,hash(locations().join('|'))].join('/');
+  if(k!==_fkey){ _fkey=k; rebuildFields(); }
 }
 function render(){
+  ensureFields();
   _pend=new Set(pending().filter(c=>c.kind!=='remove').map(c=>c.game.id));
   runRules();
   const ds=allDates(); if(!cur||!ds.includes(cur)) cur=ds.includes(cur)?cur:defaultDate();
@@ -446,13 +563,58 @@ function openInfo(gm){
   $('dCancel').onclick=closeDrawer; openDrawer();
 }
 
+/* a field: what MCLL holds there today, what is booked, and what is left */
+function openField(f,date){
+  date=date||cur;
+  const lit=isLit(f), wins=FX.windows(date,f), known=FX.known.has(f);
+  const games=G.filter(g=>g.date===date&&g.loc===f).sort((a,b)=>a.start-b.start);
+  const pr=PRACS.filter(p=>p.date===date&&p.field===f).sort((a,b)=>a.start-b.start);
+  const opens=known?openOn(date,f):[], n=FX.nearest(date,f);
+  const dates=new Set(PERMITS.filter(p=>p.field===f).map(p=>p.date));
+  const row=w=>w.rows.map(p=>`${fmt(p.start)}–${fmt(p.end)} · <b>${p.use.toLowerCase()} permit</b>`
+    +(p.permit?` · reservation ${esc(p.permit)}`:'')+(p.receipt?` · receipt ${esc(p.receipt)}`:'')
+    +(p.pname?`<br><span class="note">${esc(p.pname)}</span>`:'')+(p.notes?`<br><span class="note">${esc(p.notes)}</span>`:'')).join('<br>');
+  $('dTitle').textContent=f; $('dSub').textContent=dlabel(date,{weekday:'long',month:'short',day:'numeric'})+(lit?' · lit':'');
+  $('dBody').innerHTML=`<dl class="pdl">
+    <dt>Permit</dt><dd>${!known?'No permits on file for this field.':wins.length?wins.map(row).join('<br>')
+      :`None on file for this date — anything booked here is unpermitted.${n.prev?`<br><span class="note">Last permit ${dlabel(n.prev)}${n.next?`, next ${dlabel(n.next)}`:''}</span>`:n.next?`<br><span class="note">Next permit ${dlabel(n.next)}</span>`:''}`}</dd>
+    ${known?`<dt>Open</dt><dd>${opens.length?opens.map(w=>`${fmt(w.start)}–${fmt(w.end)} <span class="note">${w.end-w.start} min${w.use==='Practice'?', practice permit':''}</span>`
+      +(admin?` <button class="btn ghost addhere" data-s="${w.start}" data-e="${w.end}">Add game</button>`:'')).join('<br>'):'Nothing — the permit is fully booked.'}
+      ${!lit&&wins.length?`<br><span class="note">Not lit, so open time stops ${CFG.sunsetGrace} min after sunset (${fmt(sunset(date))}).</span>`:''}</dd>`:''}
+    <dt>Games</dt><dd>${games.length?games.map(g=>`${fmt(g.start)}–${fmt(g.end)} ${esc(vs(g))}`).join('<br>'):'None'}</dd>
+    <dt>Practices</dt><dd>${pr.length?pr.map(p=>`${fmt(p.start)}–${fmt(p.end)} ${esc(p.team)}${/proj/i.test(p.status)?' <span class="note">projected</span>':''}`).join('<br>'):'None'}</dd>
+    ${known?`<dt>Season</dt><dd>${dates.size} permitted date${dates.size===1?'':'s'}, ${dlabel([...dates].sort()[0])} – ${dlabel([...dates].sort().pop())}</dd>`:''}</dl>`;
+  $('dFoot').innerHTML=(known?'<button class="btn" id="fdFind">Open time on this field</button>':'')+'<button class="btn ghost" id="dCancel">Close</button>';
+  if($('fdFind')) $('fdFind').onclick=()=>{ closeDrawer(); openOpen({field:f}); };
+  $('dBody').querySelectorAll('.addhere').forEach(b=>b.onclick=()=>openEdit(null,seed(f,{start:+b.dataset.s,end:+b.dataset.e},date)));
+  $('dCancel').onclick=closeDrawer; openDrawer();
+}
+function openPractice(p){
+  if(!p) return;
+  const games=G.filter(g=>g.date===p.date&&g.loc===p.field&&g.start<p.end&&g.end>p.start);
+  const w=FX.windows(p.date,p.field);
+  $('dTitle').textContent=`${shortTeam(p.team)} practice`; $('dSub').textContent=`${p.div||'Practice'} · ${dlabel(p.date)}`;
+  $('dBody').innerHTML=(games.length?`<div class="pre"><b>A game is on this field at the same time</b><ul>${games.map(g=>`<li>${fmt(g.start)} ${esc(vsFull(g))}</li>`).join('')}</ul></div>`:'')
+    +`<dl class="pdl"><dt>Time</dt><dd>${fmt(p.start)}–${fmt(p.end)} (${p.end-p.start} min)</dd>
+    <dt>Team</dt><dd><button class="tlink" data-t="${esc(p.team)}">${esc(p.team)}</button></dd>
+    ${p.coach?`<dt>Coach</dt><dd>${esc(p.coach)}</dd>`:''}
+    <dt>Field</dt><dd><button class="tlink fl" data-f="${esc(p.field)}">${esc(p.field)}</button>${isLit(p.field)?' <b class="lit">lit</b>':''}</dd>
+    <dt>Permit</dt><dd>${w.length?w.map(x=>`${fmt(x.start)}–${fmt(x.end)} ${x.use.toLowerCase()} permit`).join('<br>'):FX.known.has(p.field)?'None on file for this date':'No permits on file for this field'}${p.permit?` · reservation ${esc(p.permit)}`:''}</dd>
+    ${p.status?`<dt>Status</dt><dd>${esc(p.status)}${/proj/i.test(p.status)?' <span class="note">— carried forward from the team\'s standing slot, not on a receipt</span>':''}</dd>`:''}</dl>
+    <p class="note">Practices come from data/practices.csv (the practice draft). Change them there, not here.</p>`;
+  $('dFoot').innerHTML='<button class="btn ghost" id="dCancel">Close</button>';
+  $('dBody').querySelectorAll('.tlink:not(.fl)').forEach(b=>b.onclick=()=>{closeDrawer();openTeam(b.dataset.t);});
+  $('dBody').querySelectorAll('.tlink.fl').forEach(b=>b.onclick=()=>openField(b.dataset.f,p.date));
+  $('dCancel').onclick=closeDrawer; openDrawer();
+}
+
 function openEdit(gm,seed){
   const isNew=!gm;
   const groups=[...new Set(G.map(g=>g.group).filter(Boolean))].sort();
   const firstGroup=(divsInScope()[0]||[groups[0]])[0];
   const g0=gm||Object.assign({date:cur||todayISO(),start:10*60,loc:'',group:firstGroup,home:'',away:'',notes:'',type:'Game'},seed||{});
   if(isNew&&!g0.end) g0.end=g0.start+120;
-  const fields=[...new Set(G.map(g=>g.loc))].sort();
+  const fields=[...new Set(G.map(g=>g.loc).concat([...FX.known]))].sort();
   $('dTitle').textContent=isNew?'Add a game':vs(gm);
   $('dSub').textContent=isNew?'Stays in this browser until it is entered in TeamLinkt':`${gmeta(gm.group).label} · ${dlabel(gm.date)}`;
   $('dBody').innerHTML=`
@@ -477,9 +639,11 @@ function openEdit(gm,seed){
   const upd=()=>{ const v=read(), id=gm?gm.id:'__new', msgs=[];
     if(v.home&&v.home===v.away) msgs.push('A team cannot play itself.');
     const trial=G.filter(g=>g.id!==id).concat([{...v,id}]);
-    RU.validate(trial,{cfg:CFG,lit:isLit,programOf:progOf}).filter(i=>(i.ids||[]).includes(id)&&i.id!=='count').forEach(i=>msgs.push(i.t));
-    $('ePre').innerHTML=msgs.length?`<div class="pre"><b>Before you save</b><ul>${msgs.map(m=>`<li>${esc(m)}</li>`).join('')}</ul></div>`
-      :`<div class="pre ok">No conflicts — ${fmt(v.start)}–${fmt(v.end)} at ${esc(v.loc)}.</div>`;
+    RU.validate(trial,{cfg:CFG,lit:isLit,programOf:progOf,fields:FX}).filter(i=>(i.ids||[]).includes(id)&&i.id!=='count').forEach(i=>msgs.push(i.t));
+    const ow=FX.known.has(v.loc)?openOn(v.date,v.loc,{games:G.filter(g=>g.date===v.date&&g.id!==id&&!RU.noTime(g))}):[];
+    const owTxt=FX.known.has(v.loc)?`<p class="note" style="margin:6px 0 0">Open on ${esc(v.loc)} that day: ${ow.length?ow.map(w=>`${fmt(w.start)}–${fmt(w.end)}`).join(', '):'nothing'}.</p>`:'';
+    $('ePre').innerHTML=owTxt+(msgs.length?`<div class="pre"><b>Before you save</b><ul>${msgs.map(m=>`<li>${esc(m)}</li>`).join('')}</ul></div>`
+      :`<div class="pre ok">No conflicts — ${fmt(v.start)}–${fmt(v.end)} at ${esc(v.loc)}.</div>`);
     $('eOk').disabled=!v.date||v.home===v.away; };
   $('eGroup').onchange=fill;
   ['eHome','eAway','eDate','eStart','eLen','eField'].forEach(id=>$(id).oninput=upd);
@@ -496,13 +660,17 @@ function openTeam(t){
   const teams=[...new Set(G.flatMap(g=>[g.home,g.away]).filter(Boolean))].sort();
   if(!t) t=teamFocus||teams.find(x=>G.some(g=>inProg(g)&&hasTeam(g,x)))||teams[0];
   const draw=()=>{
-    const list=G.filter(g=>hasTeam(g,t)).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start);
-    const today=todayISO();
+    const list=G.filter(g=>hasTeam(g,t)).concat(PRACS.filter(p=>p.team===t).map(p=>({...p,_p:1,loc:p.field})))
+      .sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start);
+    const today=todayISO(), np=list.filter(g=>g._p).length;
     $('tsOut').innerHTML=`<table class="listv"><tr><th>Date</th><th>Time</th><th></th><th>Opponent</th><th>Field</th></tr>`
-      +list.map(g=>`<tr class="g${g.date<today?' dimrow':''}" data-id="${g.id}"><td style="white-space:nowrap">${dlabel(g.date)}</td><td style="white-space:nowrap">${fmt(g.start)}</td>
+      +list.map(g=>g._p?`<tr class="g prow${g.date<today?' dimrow':''}" data-d="${g.date}"><td style="white-space:nowrap">${dlabel(g.date)}</td><td style="white-space:nowrap">${fmt(g.start)}</td>
+        <td colspan="2"><span class="note">practice${/proj/i.test(g.status)?' (projected)':''}</span></td><td>${esc(g.loc)}</td></tr>`
+        :`<tr class="g${g.date<today?' dimrow':''}" data-id="${g.id}"><td style="white-space:nowrap">${dlabel(g.date)}</td><td style="white-space:nowrap">${fmt(g.start)}</td>
         <td>${g.home===t?'home':'away'}</td><td>${esc(g.home===t?g.away:g.home)}</td><td>${esc(g.loc)}${isPending(g)?' <span class="note">changed here</span>':''}</td></tr>`).join('')+'</table>'
-      +`<p class="note">${list.length} games · ${list.filter(g=>g.home===t).length} home, ${list.filter(g=>g.away===t).length} away. Click a row to see that day.</p>`;
-    $('tsOut').querySelectorAll('tr.g').forEach(tr=>tr.onclick=()=>{ closeModal(); jumpTo(null,tr.dataset.id); });
+      +`<p class="note">${list.length-np} games · ${list.filter(g=>!g._p&&g.home===t).length} home, ${list.filter(g=>!g._p&&g.away===t).length} away${np?` · ${np} practices`:''}. Click a row to see that day.</p>`;
+    $('tsOut').querySelectorAll('tr.g:not(.prow)').forEach(tr=>tr.onclick=()=>{ closeModal(); jumpTo(null,tr.dataset.id); });
+    $('tsOut').querySelectorAll('tr.prow').forEach(tr=>tr.onclick=()=>{ closeModal(); if(!showPrac) showPrac=true; jumpTo(tr.dataset.d,null); });
   };
   showModal('Team schedule','Every game for one team, across all programs',
     `<div class="row"><label for="tsSel">Team</label><select id="tsSel">${teams.map(x=>`<option${x===t?' selected':''}>${esc(x)}</option>`).join('')}</select></div><div id="tsOut"></div>`,
@@ -622,8 +790,108 @@ function openImport(text,name,opts){
 function readFile(f){ const fr=new FileReader();
   fr.onload=()=>{ const m=f.name.match(/(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)/);
     const when=m?'exported '+new Date(+m[1],m[2]-1,+m[3],+m[4],+m[5]).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-    openImport(String(fr.result),f.name,{when}); };
+    const kind=sniff(fr.result);
+    if(kind!=='schedule') openFieldImport(kind,String(fr.result),f.name); else openImport(String(fr.result),f.name,{when}); };
   fr.readAsText(f); }
+
+/* -------------------------------------------------------------- open fields
+   Permitted time on every field, minus games and practices, over a date range. */
+const addDays=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n);
+  return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`; };
+let OPENQ=null;
+function openOpen(pre){
+  if(!PERMITS.length){ showModal('Open fields','No permit file loaded',
+    `<div class="pre">The site finds open fields from <b>data/permits.csv</b>, which is not on the website yet. Use <b>More → Import permits</b> to load one in this browser.</div>`,
+    '<button class="btn ghost" id="mClose">Close</button>'); $('mClose').onclick=closeModal; return; }
+  const pd=[...FX.dates].filter(d=>PERMITS.some(p=>p.date===d&&inProgX(p))).sort();
+  const q=OPENQ=Object.assign({from:null,to:null,days:[0,1,2,3,4,5,6],min:120,field:'',pracPermits:CFG.gamesOnPracticePermits!==false,pracBusy:true},OPENQ||{},pre||{});
+  if(!q.from){ const t=cur||todayISO(); q.from=pd.find(d=>d>=t)||pd[0]||t; }
+  if(!q.to||q.to<q.from) q.to=addDays(q.from,13);
+  const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const scope=prog==='ALL'?'every program':(CFG.programs.find(x=>x.id===prog)||{}).name;
+  showModal('Open fields',`Permitted time with nothing booked · ${scope}`,
+    `<div class="row two"><span><label for="oFrom">From</label><input id="oFrom" type="date" value="${q.from}"></span>
+       <span><label for="oTo">To</label><input id="oTo" type="date" value="${q.to}"></span></div>
+     <div class="row"><label>Days</label><span class="odays">${D.map((d,i)=>`<label><input type="checkbox" data-d="${i}"${q.days.includes(i)?' checked':''}> ${d}</label>`).join('')}</span></div>
+     <div class="row two"><span><label for="oMin">At least (minutes)</label><input id="oMin" type="number" min="30" max="600" step="15" value="${q.min}"></span>
+       <span><label for="oField">Field contains</label><input id="oField" value="${esc(q.field)}" placeholder="any field"></span></div>
+     <div class="row check"><label><input type="checkbox" id="oPP"${q.pracPermits?' checked':''}> Include time held on practice permits</label></div>
+     <div class="row check"><label><input type="checkbox" id="oPB"${q.pracBusy?' checked':''}> Practices hold the field</label></div>
+     <p class="note">Permits on file run ${pd.length?dlabel(pd[0])+' – '+dlabel(pd[pd.length-1]):'—'}. Unlit fields stop ${CFG.sunsetGrace} min after sunset.</p>
+     <div id="oOut"></div>`,
+    '<button class="btn ghost" id="oCsv">CSV</button><button class="btn ghost" id="mClose">Close</button>');
+  let res=[];
+  const run=()=>{
+    q.from=$('oFrom').value; q.to=$('oTo').value; q.min=Math.max(15,Number($('oMin').value)||120); q.field=$('oField').value.trim();
+    q.days=[...$('mBody').querySelectorAll('[data-d]')].filter(b=>b.checked).map(b=>+b.dataset.d);
+    q.pracPermits=$('oPP').checked; q.pracBusy=$('oPB').checked;
+    const ft=q.field.toLowerCase(); res=[];
+    pd.filter(d=>d>=q.from&&d<=q.to&&q.days.includes(new Date(d+'T12:00:00').getDay())).forEach(d=>{
+      FX.fieldsOn(d).filter(f=>(!ft||f.toLowerCase().indexOf(ft)>=0)&&PERMITS.some(p=>p.date===d&&p.field===f&&inProgX(p))).forEach(f=>{
+        openOn(d,f,{practicePermits:q.pracPermits,practicesBusy:q.pracBusy}).filter(w=>w.end-w.start>=q.min).forEach(w=>res.push({d,f,w})); }); });
+    res.sort((a,b)=>a.d.localeCompare(b.d)||a.w.start-b.w.start||a.f.localeCompare(b.f));
+    const tot=res.reduce((m,r)=>m+r.w.end-r.w.start,0);
+    let h=`<div class="stats"><span><b>${res.length}</b>open slot${res.length===1?'':'s'}</span><span><b>${hrs(tot)}</b>open</span><span><b>${new Set(res.map(r=>r.f)).size}</b>fields</span><span><b>${new Set(res.map(r=>r.d)).size}</b>dates</span></div>`;
+    if(!res.length) h+='<p class="note">Nothing open with these settings. Try a wider date range, a shorter minimum, or include practice-permit time.</p>';
+    let last='';
+    res.forEach((r,i)=>{ if(r.d!==last){ h+=`<h4 class="dgrp">${dlabel(r.d,{weekday:'long',month:'short',day:'numeric'})}</h4>`; last=r.d; }
+      h+=`<div class="orow2"><button class="flink ojump" data-i="${i}">${esc(r.f)}</button>
+        <span>${fmt(r.w.start)}–${fmt(r.w.end)} <em>${r.w.end-r.w.start} min${r.w.use==='Practice'?' · practice permit':''}${isLit(r.f)?' · lit':''}</em></span>
+        ${admin?`<button class="btn ghost oadd" data-i="${i}">Add game</button>`:''}</div>`; });
+    $('oOut').innerHTML=h;
+    $('oOut').querySelectorAll('.ojump').forEach(b=>b.onclick=()=>{ const r=res[+b.dataset.i]; closeModal(); fieldMode='permitted'; setTeam(''); jumpTo(r.d,null);
+      const ln=$('grid').querySelector(`.lane[data-field="${CSS.escape(r.f)}"]`); if(ln){ ln.scrollIntoView({block:'center'}); ln.classList.add('hl'); setTimeout(()=>ln.classList.remove('hl'),1600); } });
+    $('oOut').querySelectorAll('.oadd').forEach(b=>b.onclick=()=>{ const r=res[+b.dataset.i]; closeModal(); cur=r.d; render(); openEdit(null,seed(r.f,r.w,r.d)); });
+  };
+  $('mBody').addEventListener('change',run); $('oField').addEventListener('input',run);
+  $('oCsv').onclick=()=>download('open_fields.csv',[['Date','Day','Field','Open from','Open to','Minutes','Permit','Lit']].concat(res.map(r=>[r.d,
+    new Date(r.d+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}),r.f,TL.fmtTime(r.w.start),TL.fmtTime(r.w.end),r.w.end-r.w.start,r.w.use,isLit(r.f)?'yes':'']))
+    .map(r=>r.map(x=>/[",\n]/.test(String(x))?'"'+String(x).replace(/"/g,'""')+'"':x).join(',')).join('\r\n')+'\r\n');
+  $('mClose').onclick=closeModal; run();
+}
+
+/* ------------------------------------------------------- permit / practice import
+   The file is read, matched to TeamLinkt's field names, and shown before it is
+   used. Once taken it is kept in this browser until the same file is published. */
+const KIND={permits:{label:'permits',file:'permits.csv',cfg:'permitsFile'},practices:{label:'practices',file:'practices.csv',cfg:'practicesFile'}};
+function sniff(text){
+  const head=(TL.csvRows(String(text).slice(0,4000)).find(r=>r.some(c=>/\w/.test(c)))||[]).map(c=>String(c).trim().toLowerCase());
+  if(head.includes('home team')||head.includes('away team')) return 'schedule';
+  if(head.some(h=>['team','coach','manager','head coach','team name'].includes(h))) return 'practices';
+  if(head.some(h=>['field','location','full field name','facility'].includes(h))) return 'permits';
+  return 'schedule';
+}
+function openFieldImport(kind,text,name){
+  const R=FD.resolver(locations(),CFG.fieldAliases);
+  const out=kind==='permits'?FD.parsePermits(text,R):FD.parsePractices(text,R,teamOf);
+  const list=out[kind];
+  if(!list.length){ showModal(`Could not read that ${KIND[kind].label} file`,name||'',`<div class="pre"><ul>${(out.problems.length?out.problems:['Nothing found.']).map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>`
+    +`<p class="note">${kind==='permits'?'Expected columns: Date, Field, Start, End, Use (Game or Practice). Or the weekly form: Field, Day, Start, End, First, Last.'
+      :'Expected columns: Date, Field, Start, End, Team (or Coach and Division). Or the weekly form with Day, First and Last in place of Date.'}</p>`,
+    '<button class="btn ghost" id="mClose">Close</button>'); $('mClose').onclick=closeModal; return; }
+  const locs=new Set(locations()), dates=list.map(x=>x.date).sort();
+  const unplaced=[...new Set(list.filter(x=>x.how==='new'&&!locs.has(x.field)).map(x=>x.raw))].sort();
+  const matched=[...new Set(list.filter(x=>x.how==='matched').map(x=>`${x.raw} → ${x.field}`))].sort();
+  const cur0=kind==='permits'?PERMITS:PRACS;
+  const k=x=>[x.date,x.field,x.start,x.end,x.use||x.team].join('|');
+  const was=new Set(cur0.map(k)), now=new Set(list.map(k));
+  const add=list.filter(x=>!was.has(k(x))).length, gone=cur0.filter(x=>!now.has(k(x))).length;
+  const norm=kind==='permits'?FD.serializePermits(list):FD.serializePractices(list);
+  showModal(`Import ${KIND[kind].label}`,`${name||'file'} · ${list.length} ${kind==='permits'?'permit windows':'practices'}`,
+    `<div class="stats"><span><b>${list.length}</b>rows</span><span><b>${new Set(list.map(x=>x.field)).size}</b>fields</span>
+      <span><b>${dlabel(dates[0])}</b>first</span><span><b>${dlabel(dates[dates.length-1])}</b>last</span>
+      ${cur0.length?`<span><b>${add}</b>new</span><span><b>${gone}</b>dropped</span>`:''}</div>`
+    +(unplaced.length?`<div class="pre"><b>${unplaced.length} field name${unplaced.length===1?'':'s'} not in the TeamLinkt schedule.</b> They will show as their own lanes. If one is a field TeamLinkt calls something else, add it to <b>fieldAliases</b> in js/config.js.<ul>${unplaced.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div>`:'')
+    +(matched.length?`<details class="note"><summary>${matched.length} name${matched.length===1?'':'s'} matched to TeamLinkt's spelling</summary>${matched.map(esc).join('<br>')}</details>`:'')
+    +(out.problems.length?`<div class="pre">${out.problems.slice(0,12).map(esc).join('<br>')}${out.problems.length>12?`<br>… and ${out.problems.length-12} more`:''}</div>`:'')
+    +`<p class="note">Using it here changes this browser only. To publish it for everyone, download it as <b>${KIND[kind].file}</b> and upload it to the <b>data</b> folder on GitHub.</p>`,
+    `<button class="btn" id="fiUse">Use in this browser</button><button class="btn ghost" id="fiDl">Download ${KIND[kind].file}</button><button class="btn ghost" id="mClose">Cancel</button>`);
+  $('fiUse').onclick=()=>{ RAW[kind]={text:norm,name:name||KIND[kind].file,when:'imported '+new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}),local:true,sig:hash(norm)};
+    saveF(); closeModal(); cur=allDates().includes(cur)?cur:defaultDate(); render(); };
+  $('fiDl').onclick=()=>download(KIND[kind].file,norm);
+  $('mClose').onclick=closeModal;
+}
+function dropLocal(kind){ RAW[kind]=PUBF[kind]; saveF(); cur=null; render(); }
 
 /* -------------------------------------------------------------------- wiring */
 $('importBtn').onclick=()=>$('tlFile').click();
@@ -639,6 +907,11 @@ $('addBtn').onclick=()=>openEdit(null);
 $('pushBtn').onclick=()=>{ panel='hist'; render(); $('hist').scrollIntoView({behavior:'smooth',block:'center'}); };
 $('reset').onclick=()=>{ if(confirm('Discard every change made in this browser and go back to the TeamLinkt schedule?')){ G=clone(BASE); sel=null; commit(); } };
 $('teamBtn').onclick=()=>openTeam();
+$('openBtn').onclick=()=>openOpen();
+['permits','practices'].forEach(k=>{ const inp=$(k==='permits'?'pmFile':'prFile');
+  $(k==='permits'?'pmBtn':'prBtn').onclick=()=>inp.click();
+  inp.onchange=e=>{ const f=e.target.files[0]; if(f){ const fr=new FileReader(); fr.onload=()=>openFieldImport(k,String(fr.result),f.name); fr.readAsText(f); } e.target.value=''; }; });
+$('showsel').onchange=()=>{ showPrac=$('showsel').value==='all'; cur=allDates().includes(cur)?cur:defaultDate(); render(); };
 $('exportBtn').onclick=openExport;
 $('linkBtn').onclick=()=>{ writeHash(); const u=location.href;
   (navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>flash('Link copied'),()=>prompt('Copy this link',u)); };
@@ -660,7 +933,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='ArrowLeft'){ e.preventDefault(); stepDay(-1); } if(e.key==='ArrowRight'){ e.preventDefault(); stepDay(1); } });
 $('filtBtn').onclick=()=>{ const b=document.querySelector('.bar'); b.classList.toggle('showf'); $('filtBtn').setAttribute('aria-expanded',String(b.classList.contains('showf'))); };
 $('viewsel').onchange=()=>{ view=$('viewsel').value; render(); };
-$('fieldsel').onchange=()=>{ fieldMode=$('fieldsel').value; render(); };
+$('fieldsel').onchange=()=>{ fieldMode=$('fieldsel').value; cur=allDates().includes(cur)?cur:defaultDate(); render(); };
 $('teamFind').addEventListener('change',()=>{ const v=$('teamFind').value.trim().toLowerCase();
   const teams=[...new Set(G.flatMap(g=>[g.home,g.away]).filter(Boolean))];
   const hit=teams.find(t=>t.toLowerCase()===v)||(v?teams.filter(t=>inProg({group:(G.find(g=>hasTeam(g,t))||{}).group||''})).find(t=>t.toLowerCase().indexOf(v)>=0):'')
@@ -682,6 +955,21 @@ async function boot(force){
         repo={text:await r.text(),when:lm?'published '+new Date(lm).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):''}; } }catch(e){}
   }
   if(st&&st.base&&!boot._loaded){ BASE=st.base; G=st.work||clone(st.base); ignored=new Set(st.ignored||[]); litLocal=st.lit||{}; meta=Object.assign(meta,st.meta||{}); }
+  /* permits and practices: the published files, unless this browser imported newer ones */
+  const lf=loadF();
+  for(const k of ['permits','practices']){
+    let pub=null;
+    if(location.protocol!=='file:'&&CFG[KIND[k].cfg]){
+      try{ const r=await fetch(CFG[KIND[k].cfg]+'?t='+Date.now(),{cache:'no-store'});
+        if(r.ok){ const t=await r.text(), lm=r.headers.get('last-modified');
+          pub={text:t,name:CFG[KIND[k].cfg],when:lm?'published '+new Date(lm).toLocaleString('en-US',{month:'short',day:'numeric'}):'',sig:hash(t)}; } }catch(e){} }
+    PUBF[k]=pub;
+    const loc=lf[k];
+    /* the download button writes exactly what was imported, so once that file is
+       published its fingerprint matches and the local copy can go */
+    RAW[k]=loc&&!(pub&&pub.sig===loc.sig)?loc:pub;
+  }
+  if((lf.permits&&RAW.permits!==lf.permits)||(lf.practices&&RAW.practices!==lf.practices)) saveF();
   boot._loaded=true;
   if(view==='grid'&&window.innerWidth<=640&&!/v=grid/.test(location.hash)) view='list';
   readHash();

@@ -15,7 +15,11 @@ R.RULES=[
  {id:'sunset',lv:'warn',name:'Finish by sunset',why:'More than 15 minutes past sunset on a field not marked as lit.'},
  {id:'tba',lv:'warn',name:'Every game has a field and a time',why:'Location is blank or TBA, or the start time is still 12:00 am.'},
  {id:'row',lv:'warn',name:'Complete rows',why:'A game missing its group or a team in TeamLinkt.'},
- {id:'count',lv:'warn',name:'Even game counts',why:'A team with more or fewer games than most of its division.'}
+ {id:'count',lv:'warn',name:'Even game counts',why:'A team with more or fewer games than most of its division.'},
+ {id:'permit',lv:'bad',name:'Inside the permit window',why:'A game on a permitted field that starts before or runs past the hours MCLL holds it (data/permits.csv). Checked for the programs whose permits are in the file.'},
+ {id:'nopermit',lv:'warn',name:'Field is permitted that day',why:'The field has permits on other dates but none on this one - confirm it is booked.'},
+ {id:'pracpermit',lv:'warn',name:'Games on game permits',why:'A game in time held only on a practice permit. Off while gamesOnPracticePermits is true in js/config.js.'},
+ {id:'practice',lv:'warn',name:'Games clear of practices',why:'A game overlapping a practice assigned to the same field (data/practices.csv).'}
 ];
 
 /* sunset in minutes after local midnight, US Eastern */
@@ -47,7 +51,7 @@ const noField=l=>!l||/^tba$/i.test(l.trim());
 /* TeamLinkt holds with no time yet come out as 12:00 am */
 R.noTime=g=>g.start===0;
 
-/* opts: { cfg, lit:fn(name)->bool, programOf:fn(game)->id } */
+/* opts: { cfg, lit:fn(name)->bool, programOf:fn(game)->id, fields:FD.index (optional) } */
 R.validate=function(G,opts){
   const cfg=opts.cfg, out=[];
   const lv=Object.fromEntries(R.RULES.map(r=>[r.id,r.lv]));
@@ -84,6 +88,26 @@ R.validate=function(G,opts){
           :`${f} is double-booked at ${fmt(arr[j].start)} — ${vs(arr[i])} has it until ${fmt(arr[i].end)}, ${vs(arr[j])} starts.`);
       if(!opts.lit(f)) arr.forEach(g=>{ if(g.end>ss+cfg.sunsetGrace)
         push('sunset',d,[g.id],`${vs(g)} ends ${fmt(g.end)} at ${f}, ${g.end-ss} min after sunset (${fmt(ss)}).`); });
+      const FX=opts.fields;
+      const mine=arr.filter(g=>FX&&FX.covers(opts.programOf(g)));
+      if(FX&&FX.known.has(f)&&mine.length){
+        const wins=FX.windows(d,f);
+        if(!wins.length){ const n=FX.nearest(d,f);
+          mine.forEach(g=>push('nopermit',d,[g.id],`${vs(g)} is on ${f}, which has no permit on file this date${n.prev?` (last one ${n.prev.slice(5).replace('-','/')})`:''}.`)); }
+        else{
+          /* union of the windows, regardless of use */
+          const u=[]; wins.forEach(w=>{ const l=u[u.length-1]; if(l&&w.start<=l.end) l.end=Math.max(l.end,w.end); else u.push({start:w.start,end:w.end}); });
+          const hrs=u.map(w=>`${fmt(w.start)}–${fmt(w.end)}`).join(', ');
+          mine.forEach(g=>{
+            if(!u.some(w=>g.start>=w.start&&g.end<=w.end))
+              push('permit',d,[g.id],`${vs(g)} runs ${fmt(g.start)}–${fmt(g.end)}, outside the ${hrs} permit on ${f}.`);
+            else if(!cfg.gamesOnPracticePermits&&!wins.some(w=>w.use==='Game'&&g.start<w.end&&g.end>w.start))
+              push('pracpermit',d,[g.id],`${vs(g)} is on ${f}, which MCLL holds on a practice permit (${hrs}).`);
+          });
+        }
+      }
+      if(FX) FX.practicesOn(d,f).forEach(p=>arr.forEach(g=>{ if(g.start<p.end&&g.end>p.start)
+        push('practice',d,[g.id],`${vs(g)} at ${f} overlaps the ${p.team} practice (${fmt(p.start)}–${fmt(p.end)}).`); }));
     }
     const teams={}, people={};
     list.forEach(g=>[g.home,g.away].forEach(t=>{ if(!t) return;
