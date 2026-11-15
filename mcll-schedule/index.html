@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCLL Schedule | Montgomery County Little League</title>
+<meta name="description" content="Montgomery County Little League game schedule, practices, field permits and open field time for Upper County, Lower County, Softball and All County.">
+<meta property="og:title" content="MCLL Schedule">
+<meta property="og:description" content="Montgomery County Little League games, practices and open fields.">
+<meta name="theme-color" content="#14232E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314232E'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23EEF1EE'/%3E%3Cpath d='M10 9c3 4 3 10 0 14M22 9c-3 4-3 10 0 14' fill='none' stroke='%23B4232A' stroke-width='1.6'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/console.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1 id="title">MCLL schedule console</h1>
+    <span id="src"></span>
+    <div class="hgroup">
+      <span class="seg"><span class="mode" id="modeBadge">View only</span><button class="hbtn" id="modeBtn">Edit</button></span>
+      <button class="hbtn" id="addBtn">Add game</button>
+      <button class="hbtn" id="pushBtn"></button>
+      <button class="hbtn" id="reset" title="Discard every change made in this browser and go back to the TeamLinkt schedule">Undo all</button>
+    </div>
+    <div class="hgroup">
+      <button class="hbtn solid" id="importBtn" title="Load a TeamLinkt schedule export - or just drop the file on this page">Import TeamLinkt</button>
+      <button class="hbtn" id="openBtn" title="Permitted time on every field with nothing booked">Open fields</button>
+      <button class="hbtn" id="teamBtn">Team schedule</button>
+      <div class="menu">
+        <button class="hbtn" id="moreBtn" aria-haspopup="true" aria-expanded="false">More <span aria-hidden="true">&#9662;</span></button>
+        <div class="menu-pop" id="morePop" role="menu" hidden>
+          <button class="mi" id="exportBtn" role="menuitem">Export<small>schedule file, one division, or the change list</small></button>
+          <button class="mi" id="linkBtn" role="menuitem">Copy link to this view<small>opens on this program and date</small></button>
+          <button class="mi" id="reloadBtn" role="menuitem">Re-read the published file<small>data/schedule.csv on the site</small></button>
+          <button class="mi" id="pmBtn" role="menuitem">Import permits<small>when MCLL holds each field (dated or weekly rows)</small></button>
+          <button class="mi" id="prBtn" role="menuitem">Import practices<small>the practice draft: team, field, day and time</small></button>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="tlFile" accept=".csv,text/csv" hidden>
+    <input type="file" id="pmFile" accept=".csv,text/csv" hidden>
+    <input type="file" id="prFile" accept=".csv,text/csv" hidden>
+  </div>
+  <div class="progs" id="progs" role="group" aria-label="Program"></div>
+  <nav class="strip" id="strip" aria-label="Dates"></nav>
+</header>
+<div class="banner" id="banner" hidden></div>
+
+<div class="bar">
+  <div class="barinfo"><button class="navb" id="prevDay" title="Previous date (&larr;)" aria-label="Previous date">&lsaquo;</button><span class="day" id="dayName"></span><button class="navb" id="nextDay" title="Next date (&rarr;)" aria-label="Next date">&rsaquo;</button>
+    <button class="todayb" id="todayBtn" hidden>Today</button>
+    <span class="meta" id="dayMeta"></span>
+    <button class="filtb" id="filtBtn" aria-expanded="false">Filters</button></div>
+  <div class="barctl" id="barCtl">
+    <label class="toggle" for="viewsel">View</label>
+    <select id="viewsel" class="nearsel"><option value="grid">timeline</option><option value="list">list</option></select>
+    <label class="toggle" for="fieldsel">Fields</label>
+    <select id="fieldsel" class="nearsel"><option value="permitted">permitted or in use this day</option><option value="used">in use this day</option><option value="all">every field this program uses</option></select>
+    <span class="showbox"><label class="toggle" for="showsel">Show</label>
+      <select id="showsel" class="nearsel"><option value="all">games and practices</option><option value="games">games only</option></select></span>
+    <span class="teambox"><label class="toggle" for="teamFind">Team</label>
+      <input id="teamFind" list="teamList" placeholder="type a team or coach" autocomplete="off"><button id="teamClear" title="Clear the team" hidden>&times;</button>
+      <datalist id="teamList"></datalist></span>
+    <div class="filters" id="filters"></div>
+  </div>
+</div>
+
+<main>
+  <div class="chart"><div class="grid" id="grid"></div></div>
+  <p class="hint" id="hint"></p>
+  <div class="cols">
+    <div class="panel">
+      <h2>Rule check
+        <button class="tabb" id="tabIssues" aria-pressed="true">Issues</button>
+        <button class="tabb" id="tabRules" aria-pressed="false">All rules</button>
+        <button class="tabb" id="tabHist" aria-pressed="false">Changes</button>
+        <button class="tabb" id="tabIgn" aria-pressed="false">Ignored</button>
+        <span class="n" id="issueN">0</span></h2>
+      <div class="body" id="issues"></div>
+      <div class="body" id="rules" hidden></div>
+      <div class="body" id="hist" hidden></div>
+      <div class="body" id="ign" hidden></div>
+    </div>
+    <div class="panel">
+      <h2>Games per team <span class="n" id="offN"></span></h2>
+      <div class="body" id="counts"></div>
+    </div>
+  </div>
+</main>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <header><h3 id="dTitle"></h3><p id="dSub"></p></header>
+  <div class="in" id="dBody"></div>
+  <footer id="dFoot"></footer>
+</aside>
+<div class="modal" id="modal"><div class="card wide">
+  <header><h3 id="mTitle"></h3><p id="mSub"></p></header>
+  <div class="in" id="mBody"></div>
+  <footer id="mFoot"></footer>
+</div></div>
+<div class="drop" id="drop">Drop a TeamLinkt export, a permit file or a practice file</div>
+
+<script src="js/config.js"></script>
+<script src="js/teamlinkt.js"></script>
+<script src="js/fields.js"></script>
+<script src="js/rules.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
