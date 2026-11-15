@@ -13,6 +13,9 @@ of truth; this site shows the latest export and checks it.
 - `docs/PROCESS.md` - how the schedule stays current.
 - `docs/GROKBOT.md` - the instructions to give the bot that pulls TeamLinkt.
 - `tools/check_export.js` - checks a TeamLinkt export before it is published.
+- `functions/api/` and `server/auth.js` - sign-in and Publish, run by Cloudflare
+  Pages. Publish commits the file to this repository; nothing else is stored.
+  On GitHub Pages these do not run and the site is view-only.
 
 ## Updating the schedule
 

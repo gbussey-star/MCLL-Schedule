@@ -16,7 +16,8 @@
 <body>
 <header>
   <div class="brand">
-    <h1 id="title">MCLL schedule console</h1>
+    <h1 id="title">MCLL Schedule</h1>
+    <button class="authpill" id="authPill" hidden></button>
     <span id="src"></span>
     <div class="hgroup">
       <span class="seg"><span class="mode" id="modeBadge">View only</span><button class="hbtn" id="modeBtn">Edit</button></span>
@@ -34,6 +35,7 @@
           <button class="mi" id="exportBtn" role="menuitem">Export<small>schedule file, one division, or the change list</small></button>
           <button class="mi" id="linkBtn" role="menuitem">Copy link to this view<small>opens on this program and date</small></button>
           <button class="mi" id="reloadBtn" role="menuitem">Re-read the published file<small>data/schedule.csv on the site</small></button>
+          <button class="mi" id="signBtn" role="menuitem" hidden>Sign in to publish<small>admins: publish imports for everyone</small></button>
           <button class="mi" id="pmBtn" role="menuitem">Import permits<small>when MCLL holds each field (dated or weekly rows)</small></button>
           <button class="mi" id="prBtn" role="menuitem">Import practices<small>the practice draft: team, field, day and time</small></button>
         </div>

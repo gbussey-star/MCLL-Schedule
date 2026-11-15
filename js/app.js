@@ -18,6 +18,8 @@ let cur=null, prog='ALL', sel=null, admin=false, panel='issues', view='grid', fi
 let hide=new Set(), teamFocus='', bad=new Set(), warned=new Set(), ISSUES=[];
 let ignored=new Set(), litLocal={}, meta={src:'',when:'',sig:'',last:null};
 let PX=1.55;
+/* sign-in and publishing: only where the Cloudflare functions run (not on GitHub Pages or a local file) */
+let AUTH={backend:false,user:null,setup:{}};
 /* field supply: permits and practices. RAW holds the text in use for each
    (the published file, or one imported in this browser); FX is the index. */
 let RAW={permits:null,practices:null}, PUBF={permits:null,practices:null};
@@ -478,13 +480,25 @@ function renderHead(){
   $('src').title=$('src').textContent;
   $('reloadBtn').style.display=location.protocol==='file:'?'none':'';
   const ban=$('banner'), msgs=[];
-  if(REPO&&G.length&&TL.diff(BASE,REPO).same.length!==Math.max(BASE.length,REPO.length))
-    msgs.push(`This browser holds a newer TeamLinkt import than the website. Other people still see the old one. <button id="banPub">Download schedule.csv</button> then upload it to the <b>data</b> folder on GitHub.`);
+  const ahead=REPO&&G.length&&TL.diff(BASE,REPO).same.length!==Math.max(BASE.length,REPO.length);
+  if(!ahead&&meta.await&&meta.await.until>Date.now()) msgs.push(`Your publish is going live - everyone will see it within a minute or two.`);
+  if(ahead)
+    msgs.push(canPublish()?`This browser holds a newer TeamLinkt import than the website. Other people still see the old one. <button id="banPub2" class="pubb">Publish to website</button> <button id="banPub">or download schedule.csv</button>`
+      :`This browser holds a newer TeamLinkt import than the website. Other people still see the old one. ${AUTH.backend?'<button id="banSign">Sign in to publish it</button>, or ':''}<button id="banPub">Download schedule.csv</button> then upload it to the <b>data</b> folder on GitHub.`);
   ['permits','practices'].forEach(k=>{ const r=RAW[k]; if(!r||!r.local) return;
-    msgs.push(`This browser is using ${KIND[k].label} imported from <b>${esc(r.name)}</b> (${esc(r.when||'')}), which are not on the website. <button data-dl="${k}">Download ${KIND[k].file}</button> then upload it to the <b>data</b> folder on GitHub, or <button data-drop="${k}">go back to the published ${KIND[k].label}</button>.`); });
+    msgs.push(`This browser is using ${KIND[k].label} imported from <b>${esc(r.name)}</b> (${esc(r.when||'')}), which are not on the website. `
+      +(canPublish()?`<button data-pub="${k}" class="pubb">Publish to website</button>, <button data-dl="${k}">download ${KIND[k].file}</button>,`
+        :`${AUTH.backend?'<button id="banSign2">Sign in to publish</button>, or ':''}<button data-dl="${k}">Download ${KIND[k].file}</button> then upload it to the <b>data</b> folder on GitHub,`)
+      +` or <button data-drop="${k}">go back to the published ${KIND[k].label}</button>.`); });
   if(FPROB.permits.length||FPROB.practices.length) msgs.push(`Some rows of the ${FPROB.permits.length?'permit':'practice'} file could not be read. <button id="banProb">See which</button>`);
   ban.hidden=!msgs.length; ban.innerHTML=msgs.map(m=>`<div>${m}</div>`).join('');
   if($('banPub')) $('banPub').onclick=()=>download('schedule.csv',TL.serialize(BASE));
+  if($('banPub2')) $('banPub2').onclick=()=>publish('schedule',TL.serialize(BASE),meta.src);
+  ['banSign','banSign2'].forEach(id=>{ if($(id)) $(id).onclick=openSignIn; });
+  ban.querySelectorAll('[data-pub]').forEach(b=>b.onclick=()=>publish(b.dataset.pub,RAW[b.dataset.pub].text,RAW[b.dataset.pub].name));
+  $('signBtn').hidden=!AUTH.backend;
+  $('signBtn').firstChild.textContent=AUTH.user?`Signed in as ${AUTH.user}`:'Sign in to publish';
+  $('authPill').hidden=!AUTH.user; $('authPill').textContent=AUTH.user?`Signed in: ${AUTH.user}`:'';
   ban.querySelectorAll('[data-dl]').forEach(b=>b.onclick=()=>download(KIND[b.dataset.dl].file,RAW[b.dataset.dl].text));
   ban.querySelectorAll('[data-drop]').forEach(b=>b.onclick=()=>dropLocal(b.dataset.drop));
   if($('banProb')) $('banProb').onclick=()=>{ showModal('Rows that could not be read','data/permits.csv and data/practices.csv',
@@ -780,7 +794,7 @@ function openImport(text,name,opts){
     +section('removed','No longer in TeamLinkt','Ticked rows are removed from the schedule.'),
     '<button class="btn" id="imOk"></button><button class="btn ghost" id="mClose">Cancel</button>');
   const boxes=()=>[...$('mBody').querySelectorAll('input[data-ix]')];
-  const count=()=>{ const n=boxes().filter(b=>b.checked).length; $('imOk').textContent=n===items.length?`Apply all ${n}`:`Apply ${n} of ${items.length}`; };
+  const count=()=>{ if(!$('imOk')) return; const n=boxes().filter(b=>b.checked).length; $('imOk').textContent=n===items.length?`Apply all ${n}`:`Apply ${n} of ${items.length}`; };
   $('mBody').addEventListener('change',count);
   $('mBody').querySelectorAll('[data-all],[data-none]').forEach(b=>b.onclick=()=>{ const k=b.dataset.all||b.dataset.none;
     boxes().forEach(x=>{ if(items[+x.dataset.ix].kind===k) x.checked=!!b.dataset.all; }); count(); });
@@ -822,6 +836,7 @@ function openOpen(pre){
     '<button class="btn ghost" id="oCsv">CSV</button><button class="btn ghost" id="mClose">Close</button>');
   let res=[];
   const run=()=>{
+    if(!$('oFrom')) return;     /* this dialog has closed; its listener outlives it */
     q.from=$('oFrom').value; q.to=$('oTo').value; q.min=Math.max(15,Number($('oMin').value)||120); q.field=$('oField').value.trim();
     q.days=[...$('mBody').querySelectorAll('[data-d]')].filter(b=>b.checked).map(b=>+b.dataset.d);
     q.pracPermits=$('oPP').checked; q.pracBusy=$('oPB').checked;
@@ -884,14 +899,76 @@ function openFieldImport(kind,text,name){
     +(unplaced.length?`<div class="pre"><b>${unplaced.length} field name${unplaced.length===1?'':'s'} not in the TeamLinkt schedule.</b> They will show as their own lanes. If one is a field TeamLinkt calls something else, add it to <b>fieldAliases</b> in js/config.js.<ul>${unplaced.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div>`:'')
     +(matched.length?`<details class="note"><summary>${matched.length} name${matched.length===1?'':'s'} matched to TeamLinkt's spelling</summary>${matched.map(esc).join('<br>')}</details>`:'')
     +(out.problems.length?`<div class="pre">${out.problems.slice(0,12).map(esc).join('<br>')}${out.problems.length>12?`<br>… and ${out.problems.length-12} more`:''}</div>`:'')
-    +`<p class="note">Using it here changes this browser only. To publish it for everyone, download it as <b>${KIND[kind].file}</b> and upload it to the <b>data</b> folder on GitHub.</p>`,
-    `<button class="btn" id="fiUse">Use in this browser</button><button class="btn ghost" id="fiDl">Download ${KIND[kind].file}</button><button class="btn ghost" id="mClose">Cancel</button>`);
+    +`${canPublish()?`<p class="note">Publishing makes it the file everyone sees, in about a minute.</p>`:`<p class="note">Using it here changes this browser only. To publish it for everyone, ${AUTH.backend?'sign in (More &rarr; Sign in to publish), or ':''}download it as <b>${KIND[kind].file}</b> and upload it to the <b>data</b> folder on GitHub.</p>`}`,
+    (canPublish()?`<button class="btn" id="fiPub">Publish to website</button><button class="btn ghost" id="fiUse">Use in this browser only</button>`
+      :`<button class="btn" id="fiUse">Use in this browser</button><button class="btn ghost" id="fiDl">Download ${KIND[kind].file}</button>`)
+    +`<button class="btn ghost" id="mClose">Cancel</button>`);
+  if($('fiPub')) $('fiPub').onclick=()=>{ RAW[kind]={text:norm,name:name||KIND[kind].file,when:'imported',local:true,sig:hash(norm)}; saveF(); publish(kind,norm,name||KIND[kind].file); };
   $('fiUse').onclick=()=>{ RAW[kind]={text:norm,name:name||KIND[kind].file,when:'imported '+new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}),local:true,sig:hash(norm)};
     saveF(); closeModal(); cur=allDates().includes(cur)?cur:defaultDate(); render(); };
-  $('fiDl').onclick=()=>download(KIND[kind].file,norm);
+  if($('fiDl')) $('fiDl').onclick=()=>download(KIND[kind].file,norm);
   $('mClose').onclick=closeModal;
 }
 function dropLocal(kind){ RAW[kind]=PUBF[kind]; saveF(); cur=null; render(); }
+
+/* ---------------------------------------------------------- sign-in, publish
+   Publishing commits the file to GitHub through /api/publish; Cloudflare
+   redeploys and everyone sees it in about a minute. */
+const canPublish=()=>AUTH.backend&&AUTH.user&&AUTH.setup.publish;
+async function checkAuth(){
+  if(location.protocol==='file:') return;
+  try{ const r=await fetch('api/me',{cache:'no-store',credentials:'same-origin'});
+    if(r.ok&&/json/.test(r.headers.get('content-type')||'')){ const j=await r.json(); AUTH={backend:true,user:j.user,setup:j.setup||{}}; } }catch(e){}
+}
+function openSignIn(){
+  if(AUTH.user){ showModal('Signed in',`as ${AUTH.user}`,
+      `<p>You can publish schedule, permit and practice files for everyone.</p>${AUTH.setup.publish?'':'<div class="pre">Publishing is not set up yet: the GitHub token is missing in Cloudflare.</div>'}`,
+      '<button class="btn" id="soBtn">Sign out</button><button class="btn ghost" id="mClose">Close</button>');
+    $('soBtn').onclick=async()=>{ try{ await fetch('api/logout',{method:'POST',credentials:'same-origin'}); }catch(e){} AUTH.user=null; closeModal(); render(); };
+    $('mClose').onclick=closeModal; return; }
+  if(!AUTH.setup.login){ showModal('Sign in','Not set up yet',
+      '<div class="pre">No sign-in names have been set up for this site. See the setup guide (ADMIN_USERS in Cloudflare).</div>',
+      '<button class="btn ghost" id="mClose">Close</button>'); $('mClose').onclick=closeModal; return; }
+  showModal('Sign in','to publish for everyone',
+    `<form id="siForm" autocomplete="on"><div class="row"><label for="siUser">Name</label><input id="siUser" name="username" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+     <div class="row"><label for="siPw">Password</label><input id="siPw" name="password" type="password" autocomplete="current-password"></div>
+     <p class="note" id="siMsg"></p><button type="submit" hidden></button></form>`,
+    '<button class="btn" id="siGo">Sign in</button><button class="btn ghost" id="mClose">Cancel</button>');
+  const go=async e=>{ if(e) e.preventDefault(); $('siGo').disabled=true; $('siMsg').textContent='Checking…';
+    try{ const r=await fetch('api/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({user:$('siUser').value,password:$('siPw').value})});
+      const j=await r.json().catch(()=>({}));
+      if(r.ok){ AUTH.user=j.user; closeModal(); render(); return; }
+      $('siMsg').textContent=j.error||'Could not sign in.'; }
+    catch(err){ $('siMsg').textContent='Could not reach the site.'; }
+    $('siGo').disabled=false; };
+  $('siForm').onsubmit=go; $('siGo').onclick=go; $('mClose').onclick=closeModal; setTimeout(()=>$('siUser').focus(),50);
+}
+async function publish(kind,csv,name,force){
+  const label=kind==='schedule'?'schedule':KIND[kind].label;
+  showModal('Publishing…',label,'<p class="note">Saving to the website.</p>','');
+  let r,j;
+  try{ r=await fetch('api/publish',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({kind,csv,name,force:!!force})}); j=await r.json().catch(()=>({})); }
+  catch(e){ r={status:0}; j={error:'Could not reach the site.'}; }
+  if(r.status===401){ AUTH.user=null; render(); closeModal(); openSignIn(); return; }
+  if(r.status===409&&j.needForce){
+    showModal('Check before publishing',label,`<div class="pre"><b>${esc(j.error)}</b></div><p>Publish anyway only if TeamLinkt really has ${j.rows} games now.</p>`,
+      '<button class="btn" id="pfGo">Publish anyway</button><button class="btn ghost" id="mClose">Cancel</button>');
+    $('pfGo').onclick=()=>publish(kind,csv,name,true); $('mClose').onclick=closeModal; return; }
+  if(!r.ok||!j.ok){ showModal('Not published',label,`<div class="pre">${esc(j.error||'Something went wrong.')}</div>${j.detail?`<p class="note">${esc(j.detail)}</p>`:''}`,
+      '<button class="btn ghost" id="mClose">Close</button>'); $('mClose').onclick=closeModal; return; }
+  /* what this browser has is now what the site will serve */
+  const sig=hash(csv), now=new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  if(kind==='schedule'){ REPO=clone(BASE); meta.sig=sig; meta.src='published schedule'; meta.when=`published ${now} by ${AUTH.user}`;
+    meta.await={sig,until:Date.now()+10*60e3}; save(); }
+  else { const rec=Object.assign({},RAW[kind],{text:csv,local:false,sig,when:'published '+now}); RAW[kind]=rec; PUBF[kind]=rec; saveF(); }
+  render();
+  showModal(j.unchanged?'Already published':'Published',label,
+    j.unchanged?`<div class="pre ok">The website already has this exact file.</div>`
+      :`<div class="pre ok"><b>Saved.</b> Everyone will see it in about a minute.</div><p class="note">${j.rows} rows${j.was?` (was ${j.was})`:''} · saved to GitHub as commit ${esc(j.commit||'')}.</p>`,
+    '<button class="btn ghost" id="mClose">Close</button>'); $('mClose').onclick=closeModal;
+}
 
 /* -------------------------------------------------------------------- wiring */
 $('importBtn').onclick=()=>$('tlFile').click();
@@ -908,6 +985,8 @@ $('pushBtn').onclick=()=>{ panel='hist'; render(); $('hist').scrollIntoView({beh
 $('reset').onclick=()=>{ if(confirm('Discard every change made in this browser and go back to the TeamLinkt schedule?')){ G=clone(BASE); sel=null; commit(); } };
 $('teamBtn').onclick=()=>openTeam();
 $('openBtn').onclick=()=>openOpen();
+$('signBtn').onclick=()=>{ closeMore(); openSignIn(); };
+$('authPill').onclick=openSignIn;
 ['permits','practices'].forEach(k=>{ const inp=$(k==='permits'?'pmFile':'prFile');
   $(k==='permits'?'pmBtn':'prBtn').onclick=()=>inp.click();
   inp.onchange=e=>{ const f=e.target.files[0]; if(f){ const fr=new FileReader(); fr.onload=()=>openFieldImport(k,String(fr.result),f.name); fr.readAsText(f); } e.target.value=''; }; });
@@ -949,6 +1028,7 @@ window.addEventListener('hashchange',()=>{ readHash(); render(); });
    3. if the published file has moved on since last visit, show what changed */
 async function boot(force){
   const st=load(); let repo=null;
+  if(!boot._loaded) await checkAuth();
   if(location.protocol!=='file:'){
     try{ const r=await fetch(CFG.dataFile+'?t='+Date.now(),{cache:'no-store'});
       if(r.ok){ const lm=r.headers.get('last-modified');
@@ -971,10 +1051,12 @@ async function boot(force){
   }
   if((lf.permits&&RAW.permits!==lf.permits)||(lf.practices&&RAW.practices!==lf.practices)) saveF();
   boot._loaded=true;
-  
   readHash();
   if(repo){
     const sig=hash(repo.text); REPO=TL.parse(repo.text).games;
+    /* just published from here and the site has not redeployed yet: keep what this browser has */
+    if(meta.await&&meta.await.until>Date.now()&&sig!==meta.await.sig&&G.length){ render(); setTimeout(()=>boot(),20000); return; }
+    if(meta.await&&sig===meta.await.sig){ delete meta.await; save(); }
     if(!G.length){ openImport(repo.text,'published schedule',{sig,when:repo.when}); }
     else if(meta.sig!==sig||force){
       render();

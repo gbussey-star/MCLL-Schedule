@@ -1,64 +1,80 @@
 # Instructions for the schedule bot
 
-You keep the MCLL Schedule website in step with TeamLinkt. Your whole job is
-to copy one file from TeamLinkt to GitHub, unmodified, after checking it.
+You keep the MCLL Schedule website (https://mcll-schedule.pages.dev) in step
+with TeamLinkt. Your whole job: download the season schedule from TeamLinkt and
+publish it to the website, unmodified, after checking it.
 
 ## What you have
 
-- A TeamLinkt admin login for Montgomery County Little League. It is given to
-  you separately. Never write it into a file, a commit, a log or a message.
-- Write access to the GitHub repository `gbussey-star/MCLL-Schedule`, branch `main`.
+- A TeamLinkt admin login for Montgomery County Little League.
+- One way to publish, given to you separately - use whichever you were given:
+  - **A. A website sign-in** (a name and password for the schedule site), or
+  - **B. A bot key** (a long random string), or
+  - **C. Write access to the GitHub repository** `gbussey-star/MCLL-Schedule`.
+
+Never write a password, key or token into a file, a commit, a log or a message.
 
 ## Every run
 
-1. **Log in** at https://app.teamlinkt.com and open the Montgomery County
-   Little League league account (not a single team).
-2. **Open the league schedule** for the current season. Clear every filter:
-   all divisions, all teams, all locations, the whole season's dates.
-3. **Export the schedule as CSV.** TeamLinkt names the download
+1. **Log in** at https://app.teamlinkt.com and open the Montgomery County Little
+   League league account (not a single team).
+2. **Open the league schedule** for the current season. Clear every filter: all
+   divisions, all teams, all locations, the whole season's dates.
+3. **Export the schedule as CSV.** TeamLinkt names it
    `schedule_export_YYYYMMDD_HHMMSS.csv`.
-4. **Check the file.** If you can run commands in a copy of the repo:
-
-       node tools/check_export.js path/to/schedule_export_....csv
-
-   and follow its last line. Otherwise check by hand:
-   - The first line is exactly these nine columns, in this order:
+4. **Check the file:**
+   - The first line is exactly these nine columns:
      `Date,"Start Time","End Time",Location,Group,"Event Type",Notes,"Home Team","Away Team"`
-   - Dates look like `2026-09-03`; times look like `5:45 pm`.
    - The Group column includes Upper County, Lower County and All County
-     baseball groups, and Softball groups. If a whole program is missing,
-     the export was filtered: go back to step 2.
-   - Count the game rows. If the count is more than 25% below the current
-     `data/schedule.csv` in the same season, stop and report. Do not publish.
-5. **Compare** with the current `data/schedule.csv` in the repo. If the two
-   files are identical, stop. Do not make an empty commit.
-6. **Publish.** Replace `data/schedule.csv` in the repo with the export:
-   - same file name and folder: `data/schedule.csv`
-   - the file's contents exactly as downloaded. Do not sort, reformat, re-quote,
-     rename teams, fix typos or drop rows.
-   - commit message: `Schedule from TeamLinkt YYYY-MM-DD HH:MM (N games; +A added, -R removed, C changed)`
-     using the export's own timestamp. If you did not compute the counts, use
-     `Schedule from TeamLinkt YYYY-MM-DD HH:MM (N games)`.
-7. **Confirm.** About two minutes later open
-   `https://mcll-schedule.pages.dev/data/schedule.csv` and check it matches
-   what you committed.
+     baseball groups, and Softball groups. If a whole program is missing, the
+     export was filtered - go back to step 2.
+5. **Publish** with the method you were given (below).
+6. **Report** one line to George Bussey: `published` / `no change` / `stopped`,
+   the export timestamp, the game count, and for `stopped` the reason.
+
+## A. Website sign-in (works like a person would)
+
+1. Open https://mcll-schedule.pages.dev
+2. **More -> Sign in to publish.** Enter the bot's name and password.
+3. Press **Import TeamLinkt** and choose the export file.
+4. The screen lists what changed. Press **Apply all**.
+   If it says **Nothing to update**, stop and report `no change`.
+5. A banner appears: *This browser holds a newer TeamLinkt import than the
+   website.* Press **Publish to website**.
+6. Wait for **Published**. If it says **Check before publishing** (the file has
+   far fewer games than the published one), press **Cancel** and report
+   `stopped` - do not press *Publish anyway*.
+
+## B. Bot key (no browser needed)
+
+    POST https://mcll-schedule.pages.dev/api/publish?kind=schedule
+    Authorization: Bearer <bot key>
+    Content-Type: text/csv
+
+    <the export file's contents, unmodified>
+
+Answers (JSON):
+- `200 {"ok":true,"rows":N,...}` - published. With `"unchanged":true`, nothing changed.
+- `409` - far fewer games than the published schedule; probably a filtered export. Stop and report.
+- `422` - not a full schedule export (wrong columns). Stop and report.
+- `401` - the key is wrong. Stop and report.
+
+## C. GitHub commit
+
+Replace `data/schedule.csv` in `gbussey-star/MCLL-Schedule` (branch `main`)
+with the export, unmodified. Commit message:
+`Schedule from TeamLinkt YYYY-MM-DD HH:MM (N games)`. If the file is identical
+to what is there, do not commit. Never touch any other file.
 
 ## Rules
 
-- Change only `data/schedule.csv`. Never touch any other file in the repo,
-  including `data/permits.csv` and `data/practices.csv`.
+- Publish only the schedule. Never publish permits or practices.
 - Never change anything in TeamLinkt. You only read and export.
-- Never commit a file that failed a check. Report instead.
-- One commit per run at most. Never force-push or rewrite history.
-- If the login fails, a page looks different from these steps, or TeamLinkt
-  asks for a verification code, stop and report. Do not guess.
+- Never publish a file that failed a check.
+- If a login fails, a page looks different from these steps, or anything asks
+  for a verification code, stop and report. Do not guess.
 
-## Report after each run
-
-One line: `published` / `no change` / `stopped`, the export timestamp, the game
-count, and for `stopped` the reason. Send it to George Bussey.
-
-## Schedule
+## When
 
 - In season: daily at 6:00 am Eastern, and 3:00 pm Eastern on game days.
 - On request after a rainout or mass reschedule.
