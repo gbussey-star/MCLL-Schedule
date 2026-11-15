@@ -28,6 +28,7 @@
     <div class="hgroup">
       <button class="hbtn solid" id="importBtn" title="Load a TeamLinkt schedule export - or just drop the file on this page">Import TeamLinkt</button>
       <button class="hbtn" id="openBtn" title="Permitted time on every field with nothing booked">Open fields</button>
+      <span class="seg"><button class="hbtn" id="rainBtn" title="Live rainout-line status for each field, today only">Field status</button><button class="hbtn" id="rainAgainBtn" title="Read the rainout lines again" aria-label="Re-read field status">&#8635;</button></span>
       <button class="hbtn" id="teamBtn">Team schedule</button>
       <div class="menu">
         <button class="hbtn" id="moreBtn" aria-haspopup="true" aria-expanded="false">More <span aria-hidden="true">&#9662;</span></button>
@@ -70,6 +71,7 @@
 </div>
 
 <main>
+  <div class="rainstrip" id="rainStrip" hidden></div>
   <div class="chart"><div class="grid" id="grid"></div></div>
   <p class="hint" id="hint"></p>
   <div class="cols">

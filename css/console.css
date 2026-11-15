@@ -506,3 +506,12 @@ tr.orow{cursor:pointer}
 .banner .pubb,#banPub2{font-weight:700;background:#2E6B45;color:#fff;border:0;border-radius:4px;padding:2px 9px;text-decoration:none;cursor:pointer}
 #banSign,#banSign2{font:inherit;font-weight:600;background:none;border:0;padding:0;text-decoration:underline;cursor:pointer;color:inherit}
 #siForm input{width:100%}
+
+/* ---------- field status ---------- */
+.rlink{font-size:10.5px;font-weight:600;color:var(--d-aaa);text-decoration:none;border:1px solid var(--line);border-radius:3px;padding:0 4px;line-height:15px}
+.rlink:hover{border-color:var(--d-aaa)}
+.grid.wide-gut .grow{margin:2px 0 1px}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px 14px;margin:8px 0}
+.rgrid .gbwrap{width:262px;height:46px}
+.rgrid .gbanner{transform:none}
+.rainstrip .tlink{font-size:13px}

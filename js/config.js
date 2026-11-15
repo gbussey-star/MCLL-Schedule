@@ -113,6 +113,77 @@ window.MCLL_CONFIG = {
     "Travilah": "Travilah Elementary School - Field 1"
   },
 
+
+  /* Field status: the rainout lines. Each line numbers its own extensions, so a
+     field is found by line + extension. Today only: a rainout line reports a
+     field as it is right now. Add a field here (TeamLinkt name: [line, ext]) to
+     give it a live banner - extensions are on each line's own list page. */
+  rainLines: {
+    mopa:  { d: "3015795610", name: "Montgomery Parks", when: "updated by 3pm on weekdays and 7am at weekends",
+             list: "https://montgomeryparks.org/rainoutline/" },
+    gburg: { d: "2402095775", name: "City of Gaithersburg", when: "posted by the city",
+             list: "https://rainoutline.com/search/dnis/2402095775" },
+    rock:  { d: "2403415085", name: "City of Rockville", when: "updated by 3pm on weekdays and 7:30am at weekends",
+             list: "https://rainoutline.com/search/dnis/2403415085" }
+  },
+  rainExt: {
+    "South Germantown Recreational Park - Field C": ["mopa", 445],
+    "South Germantown Recreational Park - Field D": ["mopa", 443],
+    "South Germantown Recreational Park - Field E": ["mopa", 450],
+    "South Germantown Recreational Park - Field F": ["mopa", 444],
+    "Ridge Road Regional Park - Field 2": ["mopa", 160],
+    "Ridge Road Regional Park - Field 3": ["mopa", 161],
+    "Laytonia Regional Park (60/90)": ["mopa", 237],
+    "Ridgeview Middle School - Field 1": ["mopa", 422],
+    "Ridgeview Middle School - Field 4": ["mopa", 422],
+    "Rosemont ES - Field 1": ["mopa", 423],
+    "Rosemont ES - Field 2": ["mopa", 423],
+    "Travilah Elementary School - Field 1": ["mopa", 433],
+    "Stone Mill ES - Field 1": ["mopa", 427],
+    "Thurgood Marshall ES - Field 1": ["mopa", 432],
+    "Jones Lane ES - Field 1": ["mopa", 411],
+    "Quince Orchard Knolls Local Park - Field 1": ["mopa", 418],
+    "Darnestown Local Park - Field 1": ["mopa", 394],
+    "Cedar Creek Local Park - Field 1": ["mopa", 439],
+    "Hoyles Mill Village Local Park - Field 1": ["mopa", 440],
+    "Centerway Local Park - Field 1": ["mopa", 390],
+    "Gaithersburg MS - Field 2": ["mopa", 404],
+    "Shady Grove MS - Field 1": ["mopa", 424],
+    "Shady Grove MS - Field 2": ["mopa", 424],
+    "Kingsview MS - Field 1": ["mopa", 13],
+    "Kingsview MS - Field 4": ["mopa", 13],
+    "Kingsview MS - Field 5": ["mopa", 13],
+    "Herbert Hoover MS": ["mopa", 75],
+    "Cabin John MS - Field 2": ["mopa", 57],
+    "Cabin John MS - Field 4": ["mopa", 57],
+    "Carderock ES - Field 2": ["mopa", 58],
+    "Beverly Farms Local Park - Field 1": ["mopa", 42],
+    "Fallsmead Park - Field 1": ["mopa", 304],
+    "Calverton Galway Local Park - Field 1": ["mopa", 260],
+    "Twinbrook ES - Field 1": ["mopa", 452],
+    "Forest Oak MS - Field 1": ["mopa", 402],
+    "Glen Hills Local Park - Field 1": ["mopa", 72],
+    "Glen Hills Local Park - Field 2": ["mopa", 73],
+    "Layhill Local Park - Field 1": ["mopa", 336],
+    "Fountain Hills Local Park - Field 1": ["mopa", 5],
+    "Johnsons Local Park - Field 1": ["mopa", 410],
+    "Falls Road LP": ["mopa", 61],
+    "Olney Manor Rec Park - Field 1": ["mopa", 352],
+    "Olney Manor Rec Park - Field 4": ["mopa", 355],
+    "Wheaton Regional Park - Field 3": ["mopa", 301],
+    "Wheaton Regional Park - Field 6": ["mopa", 301],
+    "Lakelands Park - Field A": ["gburg", 7],
+    "Lakelands Park - Field B": ["gburg", 8],
+    "Morris Park - Walker Field": ["gburg", 10],
+    "Morris Park - Morris Field": ["gburg", 9],
+    "Kelley Park - Field 1": ["gburg", 2],
+    "Kelley Park - Field 3": ["gburg", 3],
+    "Glenora Park - Field 1": ["rock", 10],
+    "King Farm Park - Field 1": ["rock", 13],
+    "Potomac Woods Park - Upper Field": ["rock", 24],
+    "Potomac Woods Park - Lower Field": ["rock", 25]
+  },
+
   sunsetGrace: 15,     // minutes after sunset a game may still finish
   minGap: 30,          // minutes a coach needs between games on one field
   travelGap: 45,       // ... when the coach changes fields

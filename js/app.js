@@ -20,6 +20,13 @@ let ignored=new Set(), litLocal={}, meta={src:'',when:'',sig:'',last:null};
 let PX=1.55;
 /* sign-in and publishing: only where the Cloudflare functions run (not on GitHub Pages or a local file) */
 let AUTH={backend:false,user:null,setup:{}};
+/* field status: the rainout lines' own live banners, today only */
+let rainOn=(()=>{ try{ return localStorage.getItem('mcll_rain')!=='off'; }catch(e){ return true; } })();
+let rainStamp=Date.now();
+const rainSrc=f=>{ const r=(CFG.rainExt||{})[f]; if(!r) return null; const L=CFG.rainLines[r[0]]; return L?{line:r[0],d:L.d,e:r[1]}:null; };
+const rainLink=f=>{ const r=rainSrc(f); return r?`https://rainoutline.com/search/extension/${r.d}/${r.e}`:null; };
+const rainBanner=(f,w)=>{ const r=rainSrc(f); if(!r) return '';
+  return `<span class="gbwrap"><iframe class="gbanner" loading="lazy" src="https://a.statushare.com/embed/1/scrollVar2.php?d=${r.d}&showExtensions=${r.e}&hidelogo=true&hidetag=true&width=${w||230}&speed=86400000&t=${rainStamp}" width="${w||230}" height="44" frameborder="0" scrolling="no" title="Rainout line status for ${esc(f)}"></iframe></span>`; };
 /* field supply: permits and practices. RAW holds the text in use for each
    (the published file, or one imported in this browser); FX is the index. */
 let RAW={permits:null,practices:null}, PUBF={permits:null,practices:null};
@@ -213,9 +220,12 @@ function renderGrid(){
   if(!G.length){ g.innerHTML=`<div class="empty"><b>No schedule loaded yet</b>
     Press <b style="display:inline;font-size:inherit">Import TeamLinkt</b> and choose the schedule export, or drop the file anywhere on this page.</div>`;
     $('dayName').textContent=''; $('dayMeta').textContent=''; return; }
-  if(!cur){ g.innerHTML='<div class="empty"><b>Nothing scheduled</b>No games match this program and team.</div>';
+  if(!cur){ renderRain([]); g.innerHTML='<div class="empty"><b>Nothing scheduled</b>No games match this program and team.</div>';
     $('dayName').textContent=''; $('dayMeta').textContent=''; return; }
   const ss=sunset(cur), lanes=lanesFor(cur);
+  const liveOK=rainOn&&cur===todayISO()&&view!=='list';
+  g.classList.toggle('wide-gut',liveOK);
+  renderRain(lanes);
   const dayAll=G.filter(x=>x.date===cur&&lanes.includes(x.loc));
   const dayPrac=pracShown().filter(p=>p.date===cur&&lanes.includes(p.field));
   const mine=dayAll.filter(x=>inProg(x)), myPrac=dayPrac.filter(inProgX);
@@ -268,9 +278,10 @@ function renderGrid(){
     const use=!known?'':!wins.length?'<b class="use n" title="No permit on file for this date">no permit</b>'
       :wins.some(w=>w.use==='Game')?'<b class="use g" title="Game permit">game</b>':'<b class="use p" title="Practice permit">prac</b>';
     const booked=[here.length?here.length+' game'+(here.length===1?'':'s'):'',pr.length?pr.length+' prac':''].filter(Boolean).join(', ')||'nothing booked';
-    lane.innerHTML=`<div class="gut" title="${esc(f)}"><div class="g1"><button class="gname fl" data-f="${esc(f)}" title="${esc(f)} - permits, practices and open time">${esc(grouped?pk.sub:shortField(f))}</button>${use}${lit?'<b class="lit">lit</b>':''}`
+    const live=liveOK&&!noField(f), rl=live&&rainLink(f);
+    lane.innerHTML=`<div class="gut" title="${esc(f)}"><div class="g1"><button class="gname fl" data-f="${esc(f)}" title="${esc(f)} - permits, practices and open time">${esc(grouped?pk.sub:shortField(f))}</button>${rl?`<a class="rlink" href="${rl}" target="_blank" rel="noopener" title="Rainout line page for ${esc(f)}">rainout</a>`:''}${use}${lit?'<b class="lit">lit</b>':''}`
       +(admin&&!noField(f)?`<button class="flipb" data-f="${esc(f)}" title="Lit fields are not held to sunset. Saved in this browser - add the field to litFields in js/config.js to make it permanent.">${lit?'unmark lit':'mark lit'}</button>`:'')
-      +`</div><div class="g2"><em>${booked}${free?' · '+free:''}${openTot?' · '+hrs(openTot)+' open':''}</em></div></div>`;
+      +`</div>${live?`<div class="grow">${rainBanner(f)||'<span class="gbnone">not on a rainout line</span>'}</div>`:''}<div class="g2"><em>${booked}${free?' · '+free:''}${openTot?' · '+hrs(openTot)+' open':''}</em></div></div>`;
     const tr=document.createElement('div'); tr.className='track'; tr.style.width=W+'px';
     /* permit hours: hatch what MCLL does not hold; open ground drawn as boxes */
     if(known){
@@ -911,6 +922,46 @@ function openFieldImport(kind,text,name){
 }
 function dropLocal(kind){ RAW[kind]=PUBF[kind]; saveF(); cur=null; render(); }
 
+/* ------------------------------------------------------------- field status
+   Each rainout line's own embedded banner, one per field. Today only: the line
+   reports a field as it is right now, which would mislead on any other date. */
+function renderRain(lanes){
+  const box=$('rainStrip'), btn=$('rainBtn');
+  btn.className='hbtn'+(rainOn?' solid':''); btn.setAttribute('aria-pressed',String(rainOn));
+  $('rainAgainBtn').hidden=!rainOn;
+  if(!rainOn||!G.length){ box.hidden=true; box.innerHTML=''; return; }
+  box.hidden=false;
+  const today=todayISO();
+  if(cur!==today){
+    box.innerHTML=`<p class="note"><b>Live field status shows on today only.</b> The rainout lines report a field as it is right now.
+      <button class="tlink" id="rainToday">Go to today</button> · <button class="tlink" id="rainAll">Every field's status now</button></p>`;
+    $('rainToday').onclick=()=>{ cur=allDates().includes(today)?today:cur; if(cur!==today){ openRainAll(); return; } render(); };
+    $('rainAll').onclick=openRainAll; return;
+  }
+  const real=(lanes||[]).filter(f=>!noField(f));
+  const used=[...new Set(real.map(f=>rainSrc(f)).filter(Boolean).map(r=>r.line))];
+  const missing=real.filter(f=>!rainSrc(f)).map(shortField);
+  const bits=used.map(k=>`<a href="${CFG.rainLines[k].list}" target="_blank" rel="noopener">${CFG.rainLines[k].name}</a> <span class="muted">(${CFG.rainLines[k].when})</span>`);
+  const said=bits.length>1?bits.slice(0,-1).join(', ')+' and '+bits[bits.length-1]:bits[0];
+  box.innerHTML=`<p class="note"><b>Live status</b> from ${said||'the rainout lines'}. Click <b>rainout</b> beside a field for its own page.
+    <button class="tlink" id="rainAll">Every field's status now</button>
+    ${missing.length?`<br><span class="muted">Not on a rainout line: ${missing.map(esc).join(', ')}.</span>`:''}</p>`;
+  $('rainAll').onclick=openRainAll;
+}
+function openRainAll(){
+  const fields=Object.keys(CFG.rainExt||{}).filter(f=>prog==='ALL'||G.some(g=>g.loc===f&&inProg(g))||PERMITS.some(p=>p.field===f&&inProgX(p))||PRACS.some(p=>p.field===f&&inProgX(p)));
+  const list=(fields.length?fields:Object.keys(CFG.rainExt||{})).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const seen=new Set();
+  showModal('Field status now',`${list.length} fields · straight from the rainout lines`,
+    `<p class="note">Each banner is the rainout line's own live status for that field. Fields sharing one rainout extension show the same banner.</p>
+     <div class="rgrid">${list.map(f=>{ const r=rainSrc(f), k=r.d+'/'+r.e, dup=seen.has(k); seen.add(k);
+       return `<div class="rcard"><a href="${rainLink(f)}" target="_blank" rel="noopener">${esc(shortField(f))}</a>${rainBanner(f,260)}</div>`; }).join('')}</div>
+     <p class="note">Lines: ${Object.values(CFG.rainLines).map(L=>`<a href="${L.list}" target="_blank" rel="noopener">${L.name}</a>`).join(' · ')}</p>`,
+    '<button class="btn ghost" id="rAgain">Re-read</button><button class="btn ghost" id="mClose">Close</button>');
+  $('rAgain').onclick=()=>{ rainStamp=Date.now(); openRainAll(); };
+  $('mClose').onclick=closeModal;
+}
+
 /* ---------------------------------------------------------- sign-in, publish
    Publishing commits the file to GitHub through /api/publish; Cloudflare
    redeploys and everyone sees it in about a minute. */
@@ -985,6 +1036,8 @@ $('pushBtn').onclick=()=>{ panel='hist'; render(); $('hist').scrollIntoView({beh
 $('reset').onclick=()=>{ if(confirm('Discard every change made in this browser and go back to the TeamLinkt schedule?')){ G=clone(BASE); sel=null; commit(); } };
 $('teamBtn').onclick=()=>openTeam();
 $('openBtn').onclick=()=>openOpen();
+$('rainBtn').onclick=()=>{ rainOn=!rainOn; try{ localStorage.setItem('mcll_rain',rainOn?'on':'off'); }catch(e){} render(); };
+$('rainAgainBtn').onclick=()=>{ rainStamp=Date.now(); render(); };
 $('signBtn').onclick=()=>{ closeMore(); openSignIn(); };
 $('authPill').onclick=openSignIn;
 ['permits','practices'].forEach(k=>{ const inp=$(k==='permits'?'pmFile':'prFile');
