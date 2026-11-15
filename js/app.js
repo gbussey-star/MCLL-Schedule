@@ -971,7 +971,7 @@ async function boot(force){
   }
   if((lf.permits&&RAW.permits!==lf.permits)||(lf.practices&&RAW.practices!==lf.practices)) saveF();
   boot._loaded=true;
-  if(view==='grid'&&window.innerWidth<=640&&!/v=grid/.test(location.hash)) view='list';
+  
   readHash();
   if(repo){
     const sig=hash(repo.text); REPO=TL.parse(repo.text).games;
